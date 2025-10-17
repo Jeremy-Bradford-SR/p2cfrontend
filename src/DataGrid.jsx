@@ -13,6 +13,14 @@ const DataGrid = ({ data, onRowClick }) => {
   ];
 
   const getRowData = (row) => {
+    if(row._source === 'Crime'){
+      return {
+        type: 'Crime',
+        time: row.starttime || row.event_time || '',
+        location: row.location || row.address || '',
+        summary: row.nature || 'LW' || row.key || JSON.stringify(row),
+      }
+    }
     const isCad = (String(row._source || row.source || '').toLowerCase().includes('cadh')) || row._source === 'cadHandler';
     return {
       type: isCad ? 'CAD' : 'Arrest',

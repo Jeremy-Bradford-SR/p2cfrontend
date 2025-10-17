@@ -10,7 +10,9 @@ export default function App(){
   const [selectedTable, setSelectedTable] = useState('')
   const [schema, setSchema] = useState(null)
   const [data, setData] = useState([])
-  const [limit, setLimit] = useState(10)
+  const [limit, setLimit] = useState(100)
+  const [cadLimit, setCadLimit] = useState(100)
+  const [arrestLimit, setArrestLimit] = useState(100)
   const [filters, setFilters] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -21,35 +23,62 @@ export default function App(){
   const [results, setResults] = useState([])
   const [cadResults, setCadResults] = useState([])
   const [arrestResults, setArrestResults] = useState([])
+  const [crimeResults, setCrimeResults] = useState([])
   const [columnFilters, setColumnFilters] = useState({})
   const mapRef = React.useRef(null)
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const [chartsVisible, setChartsVisible] = useState(false)
+  const [crimeLimit, setCrimeLimit] = useState(100)
 
   useEffect(()=>{
-    // on mount: load combined incidents only. Assume tables exist on the server.
+    // on mount: load per-table data from server using server-side queries
     (async () => {
       setLoading(true)
       try{
-        const r = await getIncidents({limit})
-        if(r && r.success){
-          const list = r.response.data && r.response.data.data ? r.response.data.data : []
-          setData(list)
-          setResults(list)
-          // split results into cadHandler and DailyBulletinArrests
-          const cad = list.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('cadh')) || x._source==='cadHandler')
-          const arrests = list.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('daily')) || x._source==='DailyBulletinArrests')
-          setCadResults(cad)
-          setArrestResults(arrests)
-        }else{
-          console.error('getIncidents failed', r)
-        }
+        let whereParts = []
+        if(columnFilters.nature) whereParts.push(`nature = '${String(columnFilters.nature).replace(/'/g,"''")}'`)
+        if(columnFilters.charge) whereParts.push(`charge = '${String(columnFilters.charge).replace(/'/g,"''")}'`)
+        if(columnFilters.location) whereParts.push(`location = '${String(columnFilters.location).replace(/'/g,"''")}'`)
+        if(dateFrom) whereParts.push(`starttime >= '${dateFrom}'`)
+        if(dateTo) whereParts.push(`starttime <= '${dateTo}'`)
+        if(filters) whereParts.push(`(${filters})`)
+        const combinedFilters = whereParts.join(' AND ')
+
+        // query CAD and Arrests and Crime (Crime is derived from DailyBulletinArrests selecting key)
+        const [cadRes, arrRes, crimeRes] = await Promise.all([
+          api.queryTable({table: 'cadHandler', limit: cadLimit, filters: combinedFilters}),
+          api.queryTable({table: 'DailyBulletinArrests', limit: arrestLimit, filters: combinedFilters}),
+          api.queryTable({table: 'DailyBulletinArrests', columns: ['key'], limit: crimeLimit, filters: combinedFilters})
+        ])
+
+        const cadRows = cadRes && cadRes.success && cadRes.response && cadRes.response.data && cadRes.response.data.data ? cadRes.response.data.data : []
+        const arrRows = arrRes && arrRes.success && arrRes.response && arrRes.response.data && arrRes.response.data.data ? arrRes.response.data.data : []
+        const crimeRaw = crimeRes && crimeRes.success && crimeRes.response && crimeRes.response.data && crimeRes.response.data.data ? crimeRes.response.data.data : []
+        const crimeRows = crimeRaw.map(r => ({ ...r, _source: 'Crime', nature: 'LW', location: r.key || r.Key || JSON.stringify(r) }))
+
+        const combined = [...cadRows, ...arrRows, ...crimeRows]
+        setData(combined)
+        setResults(combined)
+        setCadResults(cadRows)
+        setArrestResults(arrRows)
+        setCrimeResults(crimeRows)
       }catch(err){
-        console.error('Error fetching incidents on startup', err)
+        console.error('Error fetching per-table data on startup', err)
       }
       setLoading(false)
     })()
   },[])
+
+  // when limits change, re-slice existing data into panels
+  useEffect(()=>{
+    if(!results) return
+    const cadAll = results.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('cadh')) || x._source==='cadHandler')
+    const arrestsAll = results.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('daily')) || x._source==='DailyBulletinArrests')
+    const crimesAll = results.filter(x=> x._source === 'Crime')
+    setCadResults(cadAll.slice(0, cadLimit))
+    setArrestResults(arrestsAll.slice(0, arrestLimit))
+    setCrimeResults(crimesAll.slice(0, crimeLimit))
+  },[cadLimit, arrestLimit, crimeLimit, results])
 
   async function loadSchema(table){
     setLoading(true)
@@ -74,24 +103,27 @@ export default function App(){
 
     const combined = whereParts.join(' AND ')
 
-    // query combined incidents endpoint (proxy will apply filters server-side if supported)
-    const res = await api.getIncidents({limit, distanceKm, centerLat, centerLng, dateFrom, dateTo})
-    if(res.success){
-      const list = res.response.data && res.response.data.data ? res.response.data.data : []
-      // apply client-side quick filters to the returned list (in case proxy doesn't support them)
-      let filtered = list
-      if(columnFilters.nature) filtered = filtered.filter(x=>String(x.nature||'').toLowerCase() === String(columnFilters.nature).toLowerCase())
-      if(columnFilters.charge) filtered = filtered.filter(x=>String(x.charge||'').toLowerCase() === String(columnFilters.charge).toLowerCase())
-      if(columnFilters.location) filtered = filtered.filter(x=>String(x.location||'').toLowerCase() === String(columnFilters.location).toLowerCase())
-      if(dateFrom) filtered = filtered.filter(x=> { try{ return new Date(x.starttime) >= new Date(dateFrom) }catch(e){return true}})
-      if(dateTo) filtered = filtered.filter(x=> { try{ return new Date(x.starttime) <= new Date(dateTo) }catch(e){return true}})
+    // perform server-side per-table queries
+    try{
+      const [cadRes, arrRes, crimeRes] = await Promise.all([
+        api.queryTable({table: 'cadHandler', limit: cadLimit, filters: combined}),
+        api.queryTable({table: 'DailyBulletinArrests', limit: arrestLimit, filters: combined}),
+        api.queryTable({table: 'DailyBulletinArrests', columns: ['key'], limit: crimeLimit, filters: combined})
+      ])
 
-      setData(filtered)
-      setResults(filtered)
-      const cad = filtered.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('cadh')) || x._source==='cadHandler')
-      const arrests = filtered.filter(x=> (String(x._source||x.source||'').toLowerCase().includes('daily')) || x._source==='DailyBulletinArrests')
-      setCadResults(cad)
-      setArrestResults(arrests)
+      const cadRows = cadRes && cadRes.success && cadRes.response && cadRes.response.data && cadRes.response.data.data ? cadRes.response.data.data : []
+      const arrRows = arrRes && arrRes.success && arrRes.response && arrRes.response.data && arrRes.response.data.data ? arrRes.response.data.data : []
+      const crimeRaw = crimeRes && crimeRes.success && crimeRes.response && crimeRes.response.data && crimeRes.response.data.data ? crimeRes.response.data.data : []
+      const crimeRows = crimeRaw.map(r => ({ ...r, _source: 'Crime', nature: 'LW', location: r.key || r.Key || JSON.stringify(r) }))
+
+      const combinedRows = [...cadRows, ...arrRows, ...crimeRows]
+      setData(combinedRows)
+      setResults(combinedRows)
+      setCadResults(cadRows)
+      setArrestResults(arrRows)
+      setCrimeResults(crimeRows)
+    }catch(e){
+      console.error('runQuery per-table failed', e)
     }
     setLoading(false)
   }
@@ -104,6 +136,26 @@ export default function App(){
     let geoy = r.geoy || r.Geoy || r['geoy']
     if(!lat && geox && geoy){ lat = Number(geoy); lon = Number(geox) }
     if(lat && lon){ if(mapRef.current && mapRef.current.setView) mapRef.current.setView([Number(lat), Number(lon)], 14) }
+  }
+
+  function fitMarkers(){
+    try{
+      const coords = data.map(r=>{
+        let lat = r.lat || r.Lat || null
+        let lon = r.lon || r.Lon || null
+        let geox = r.geox || r.Geox || r['geox']
+        let geoy = r.geoy || r.Geoy || r['geoy']
+        if(!lat && geox && geoy){ lat = Number(geoy); lon = Number(geox) }
+        if(lat && lon) return [Number(lat), Number(lon)]
+        return null
+      }).filter(Boolean)
+      if(coords.length===0) return
+      if(mapRef.current && mapRef.current.fitBounds) mapRef.current.fitBounds(coords, {padding: [50,50]})
+    }catch(e){console.warn('fitMarkers failed', e)}
+  }
+
+  function centerDubuque(){
+    if(mapRef.current && mapRef.current.setView) mapRef.current.setView([42.5006, -90.6646], 12)
   }
 
   return (
@@ -127,6 +179,21 @@ export default function App(){
 
               <label>Limit</label>
               <input type="number" value={limit} min={1} max={1000} onChange={e => setLimit(Number(e.target.value))} />
+
+              <div style={{display:'flex', gap:8, marginTop:8}}>
+                <div>
+                  <label>CAD page size</label>
+                  <input type="number" value={cadLimit} min={1} max={1000} onChange={e => setCadLimit(Number(e.target.value))} />
+                </div>
+                <div>
+                  <label>Arrests page size</label>
+                  <input type="number" value={arrestLimit} min={1} max={1000} onChange={e => setArrestLimit(Number(e.target.value))} />
+                </div>
+                <div>
+                  <label>Crime page size</label>
+                  <input type="number" value={crimeLimit} min={1} max={1000} onChange={e => setCrimeLimit(Number(e.target.value))} />
+                </div>
+              </div>
 
               <label>Filters (quick, built from returned data)</label>
               <div>
@@ -176,10 +243,15 @@ export default function App(){
                   <label>Distance (km)</label>
                   <input value={distanceKm} onChange={e => setDistanceKm(e.target.value)} placeholder="5" />
                 </div>
+                
               </div>
 
               <div className="actions">
-                <button onClick={runQuery} disabled={loading}>Run Query</button>
+                <button onClick={runQuery} disabled={loading}>Search</button>
+                <div style={{display:'flex', gap:8, marginTop:8}}>
+                  <button onClick={centerDubuque} type="button">Center Dubuque</button>
+                  <button onClick={fitMarkers} type="button">Fit Markers</button>
+                </div>
               </div>
             </div>
           </div>
@@ -200,8 +272,19 @@ export default function App(){
             {loading && <div style={{ padding: 8, background: '#fffbe6', border: '1px solid #ffecb5' }}>Loading data...</div>}
             {!loading && results.length === 0 && <div style={{ padding: 8, background: '#fff1f0', border: '1px solid #ffd1d1' }}>No results to display — check API connectivity or adjust filters.</div>}
 
-            <div className="results-grid">
-              <DataGrid data={results} onRowClick={zoomToRow} />
+            <div className="results-grid three-columns" style={{display:'flex', gap:16}}>
+              <div className="results-panel" style={{flex:1}}>
+                <h4>CAD (showing {cadResults.length})</h4>
+                <DataGrid data={cadResults} onRowClick={zoomToRow} />
+              </div>
+              <div className="results-panel" style={{flex:1}}>
+                <h4>DailyBulletinArrests (showing {arrestResults.length})</h4>
+                <DataGrid data={arrestResults} onRowClick={zoomToRow} />
+              </div>
+              <div className="results-panel" style={{flex:1}}>
+                <h4>Crime (showing {crimeResults.length})</h4>
+                <DataGrid data={crimeResults} onRowClick={zoomToRow} />
+              </div>
             </div>
           </section>
           {chartsVisible && (
