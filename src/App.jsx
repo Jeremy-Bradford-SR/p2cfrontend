@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import MapView from './MapView'
+import DataGrid from './DataGrid'
+import Charts from './Charts'
 import api, { getIncidents } from './client'
 
 export default function App(){
@@ -21,6 +23,8 @@ export default function App(){
   const [arrestResults, setArrestResults] = useState([])
   const [columnFilters, setColumnFilters] = useState({})
   const mapRef = React.useRef(null)
+  const [sidebarVisible, setSidebarVisible] = useState(true)
+  const [chartsVisible, setChartsVisible] = useState(false)
 
   useEffect(()=>{
     // on mount: load combined incidents only. Assume tables exist on the server.
@@ -103,124 +107,110 @@ export default function App(){
   }
 
   return (
-    <div className="app-vertical">
-      <header className="header"><h1>Incidents Map — Dubuque, IA</h1></header>
-
-      <section className="map-section">
-        <div className="map-container">
-          <MapView ref={mapRef} points={data} center={(centerLat && centerLng)?[Number(centerLat), Number(centerLng)]:null} distanceKm={distanceKm?Number(distanceKm):null} zoomTo={pos=>{ if(mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14) }} />
+    <div className="app-container">
+      <header className="header">
+        <h1>Incidents Map — Dubuque, IA</h1>
+        <div>
+          <button onClick={() => setSidebarVisible(!sidebarVisible)}>
+            {sidebarVisible ? 'Hide' : 'Show'} Controls
+          </button>
+          <button onClick={() => setChartsVisible(!chartsVisible)}>
+            {chartsVisible ? 'Hide' : 'Show'} Charts
+          </button>
         </div>
+      </header>
+      <div className="content-container">
+        {sidebarVisible && (
+          <div className="sidebar">
+            <div className="controls">
+              {/* table selector removed — both tables are queried by default */}
 
-        <div className="controls">
-          {/* table selector removed — both tables are queried by default */}
+              <label>Limit</label>
+              <input type="number" value={limit} min={1} max={1000} onChange={e => setLimit(Number(e.target.value))} />
 
-          <label>Limit</label>
-          <input type="number" value={limit} min={1} max={1000} onChange={e=>setLimit(Number(e.target.value))} />
+              <label>Filters (quick, built from returned data)</label>
+              <div>
+                <small>Choose values to filter. These lists are built from the most-recent results.</small>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <select value={columnFilters.nature || ''} onChange={e => setColumnFilters({ ...columnFilters, nature: e.target.value })}>
+                    <option value="">Nature (all)</option>
+                    {[...new Set(data.map(d => d.nature).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  <select value={columnFilters.charge || ''} onChange={e => setColumnFilters({ ...columnFilters, charge: e.target.value })}>
+                    <option value="">Charge (all)</option>
+                    {[...new Set(data.map(d => d.charge).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  <select value={columnFilters.location || ''} onChange={e => setColumnFilters({ ...columnFilters, location: e.target.value })}>
+                    <option value="">Location (all)</option>
+                    {[...new Set(data.map(d => d.location).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <label>Free-form SQL fragment (advanced)</label>
+                  <input value={filters} onChange={e => setFilters(e.target.value)} placeholder="e.g. starttime >= '2025-01-01'" />
+                </div>
+              </div>
 
-          <label>Filters (quick, built from returned data)</label>
-          <div>
-            <small>Choose values to filter. These lists are built from the most-recent results.</small>
-            <div style={{display:'flex',gap:8,marginTop:8}}>
-              <select value={columnFilters.nature||''} onChange={e=>setColumnFilters({...columnFilters, nature:e.target.value})}>
-                <option value="">Nature (all)</option>
-                {[...new Set(data.map(d=>d.nature).filter(Boolean))].map(v=> <option key={v} value={v}>{v}</option>)}
-              </select>
-              <select value={columnFilters.charge||''} onChange={e=>setColumnFilters({...columnFilters, charge:e.target.value})}>
-                <option value="">Charge (all)</option>
-                {[...new Set(data.map(d=>d.charge).filter(Boolean))].map(v=> <option key={v} value={v}>{v}</option>)}
-              </select>
-              <select value={columnFilters.location||''} onChange={e=>setColumnFilters({...columnFilters, location:e.target.value})}>
-                <option value="">Location (all)</option>
-                {[...new Set(data.map(d=>d.location).filter(Boolean))].map(v=> <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            <div style={{marginTop:8}}>
-              <label>Free-form SQL fragment (advanced)</label>
-              <input value={filters} onChange={e=>setFilters(e.target.value)} placeholder="e.g. starttime >= '2025-01-01'" />
+              <div className="date-row">
+                <div>
+                  <label>Date from</label>
+                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                </div>
+                <div>
+                  <label>Date to</label>
+                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                </div>
+              </div>
+
+              <h4>Distance filter (optional)</h4>
+              <div className="coord-row">
+                <div>
+                  <label>Center lat</label>
+                  <input value={centerLat} onChange={e => setCenterLat(e.target.value)} placeholder="42.5" />
+                </div>
+                <div>
+                  <label>Center lng</label>
+                  <input value={centerLng} onChange={e => setCenterLng(e.target.value)} placeholder="-90.7" />
+                </div>
+                <div>
+                  <label>Distance (km)</label>
+                  <input value={distanceKm} onChange={e => setDistanceKm(e.target.value)} placeholder="5" />
+                </div>
+              </div>
+
+              <div className="actions">
+                <button onClick={runQuery} disabled={loading}>Run Query</button>
+              </div>
             </div>
           </div>
+        )}
+        <div className="main-content">
+          <section className="map-section">
+            <div className="map-container">
+              <MapView ref={mapRef} points={data} center={(centerLat && centerLng) ? [Number(centerLat), Number(centerLng)] : null} distanceKm={distanceKm ? Number(distanceKm) : null} zoomTo={pos => { if (mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14) }} onAreaSelect={({ lat, lng, radius }) => {
+                setCenterLat(lat);
+                setCenterLng(lng);
+                setDistanceKm(radius / 1000);
+              }} />
+            </div>
+          </section>
 
-          <div className="date-row">
-            <div>
-              <label>Date from</label>
-              <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} />
-            </div>
-            <div>
-              <label>Date to</label>
-              <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} />
-            </div>
-          </div>
+          <section className="results-section">
+            <h3>Results (total: {results.length})</h3>
+            {loading && <div style={{ padding: 8, background: '#fffbe6', border: '1px solid #ffecb5' }}>Loading data...</div>}
+            {!loading && results.length === 0 && <div style={{ padding: 8, background: '#fff1f0', border: '1px solid #ffd1d1' }}>No results to display — check API connectivity or adjust filters.</div>}
 
-          <h4>Distance filter (optional)</h4>
-          <div className="coord-row">
-            <div>
-              <label>Center lat</label>
-              <input value={centerLat} onChange={e=>setCenterLat(e.target.value)} placeholder="42.5" />
+            <div className="results-grid">
+              <DataGrid data={results} onRowClick={zoomToRow} />
             </div>
-            <div>
-              <label>Center lng</label>
-              <input value={centerLng} onChange={e=>setCenterLng(e.target.value)} placeholder="-90.7" />
-            </div>
-            <div>
-              <label>Distance (km)</label>
-              <input value={distanceKm} onChange={e=>setDistanceKm(e.target.value)} placeholder="5" />
-            </div>
-          </div>
-
-          <div className="actions">
-            <button onClick={runQuery} disabled={loading}>Run Query</button>
-          </div>
+          </section>
+          {chartsVisible && (
+            <section className="charts-section">
+              <Charts data={results} />
+            </section>
+          )}
         </div>
-      </section>
-
-      <section className="results-section">
-        <h3>Results (total: {results.length})</h3>
-        {loading && <div style={{padding:8,background:'#fffbe6',border:'1px solid #ffecb5'}}>Loading data...</div>}
-        {!loading && results.length===0 && <div style={{padding:8,background:'#fff1f0',border:'1px solid #ffd1d1'}}>No results to display — check API connectivity or adjust filters.</div>}
-
-        <div style={{display:'flex',gap:12,marginTop:12}}>
-          <div style={{flex:1,border:'1px solid #eee',padding:12,background:'#fff'}}>
-            <h4>CAD Handler ({cadResults.length})</h4>
-            <table className="results-table">
-              <thead>
-                <tr><th>#</th><th>Time</th><th>Address</th><th>Summary</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {cadResults.map((r,i)=> (
-                  <tr key={i}>
-                    <td>{i+1}</td>
-                    <td>{r.starttime || r.StartTime || ''}</td>
-                    <td>{r.address || r.Address || r.location || ''}</td>
-                    <td>{r.nature || r.summary || ''}</td>
-                    <td><button onClick={()=>zoomToRow(r)}>Zoom</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{flex:1,border:'1px solid #eee',padding:12,background:'#fff'}}>
-            <h4>Daily Bulletin Arrests ({arrestResults.length})</h4>
-            <table className="results-table">
-              <thead>
-                <tr><th>#</th><th>Event</th><th>Description</th><th>Location</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {arrestResults.map((r,i)=> (
-                  <tr key={i}>
-                    <td>{i+1}</td>
-                    <td>{r.event || r.event_time || r.Event || ''}</td>
-                    <td>{r.description || r.Description || r.charge || ''}</td>
-                    <td>{r.location || r.Location || ''}</td>
-                    <td><button onClick={()=>zoomToRow(r)}>Zoom</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-      </section>
+      </div>
     </div>
   )
 }

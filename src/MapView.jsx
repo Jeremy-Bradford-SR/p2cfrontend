@@ -1,8 +1,10 @@
 import React, { useMemo, forwardRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMap, FeatureGroup } from 'react-leaflet'
+import { EditControl } from 'react-leaflet-draw'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet-draw/dist/leaflet.draw.css'
 
 // Configure Leaflet icon URLs (avoid bundling images)
 delete L.Icon.Default.prototype._getIconUrl
@@ -39,7 +41,7 @@ function haversineKm(lat1,lon1,lat2,lon2){
 const DEFAULT_CENTER = [42.5006, -90.6646] // Dubuque, IA
 const MAX_BOUNDS = [[DEFAULT_CENTER[0]-0.3, DEFAULT_CENTER[1]-0.5],[DEFAULT_CENTER[0]+0.3, DEFAULT_CENTER[1]+0.5]]
 
-export default forwardRef(function MapView({points = [], center, distanceKm, zoomTo}, ref){
+export default forwardRef(function MapView({points = [], center, distanceKm, zoomTo, onAreaSelect}, ref){
   const markers = useMemo(()=>{
     return (points || []).map(row=>{
       // prefer lat/lon fields, then geox/geoy
@@ -74,9 +76,31 @@ export default forwardRef(function MapView({points = [], center, distanceKm, zoo
 
   const mapCenter = (center && center.length===2) ? center : DEFAULT_CENTER
 
+  const onCreated = (e) => {
+    const { layerType, layer } = e;
+    if (layerType === 'circle') {
+      const { lat, lng } = layer.getLatLng();
+      const radius = layer.getRadius();
+      if(onAreaSelect) onAreaSelect({lat, lng, radius});
+    }
+  };
+
   return (
     <MapContainer center={mapCenter} zoom={12} minZoom={11} maxZoom={18} maxBounds={MAX_BOUNDS} whenCreated={m=>{ if(ref) ref.current = m }} style={{height:'100%', width:'100%'}}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <FeatureGroup>
+        <EditControl
+          position="topright"
+          onCreated={onCreated}
+          draw={{
+            rectangle: false,
+            polygon: false,
+            polyline: false,
+            marker: false,
+            circlemarker: false,
+          }}
+        />
+      </FeatureGroup>
       <FitBounds points={markers} />
       <MarkerClusterGroup>
         {markers.map((m, idx) => (

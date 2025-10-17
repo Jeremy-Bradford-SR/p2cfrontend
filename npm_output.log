@@ -1,0 +1,11 @@
+
+> p2cfrontend@0.1.0 dev
+> vite
+
+Port 8004 is in use, trying another one...
+Port 8005 is in use, trying another one...
+
+  VITE v5.4.20  ready in 270 ms
+
+  ➜  Local:   http://localhost:8006/
+  ➜  Network: use --host to expose
