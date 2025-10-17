@@ -1,0 +1,17 @@
+services:
+  p2cfrontend:
+    build:
+      context: .
+    ports:
+      - "8004:8004"
+    depends_on:
+      - proxy
+    restart: unless-stopped
+  proxy:
+    build:
+      context: ./proxy
+    ports:
+      - "9000:9000"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

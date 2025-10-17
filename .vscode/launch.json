@@ -1,0 +1,28 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "Frontend + Proxy",
+      "configurations": ["Open Frontend in Browser (Docker)", "Launch Proxy (local)"]
+    }
+  ],
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Launch Proxy (local)",
+      "program": "${workspaceFolder}/proxy/index.js",
+      "cwd": "${workspaceFolder}/proxy",
+      "autoAttachChildProcesses": true,
+      "env": { "NODE_ENV": "development", "PORT": "9000" }
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Open Frontend in Browser (Docker)",
+      "url": "http://localhost:8004",
+      "preLaunchTask": "docker: compose up",
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}
