@@ -61,11 +61,7 @@ html, body, #root {
 }
 
 .sidebar {
-  width: 350px;
-  padding: 1.5rem;
-  border-right: 1px solid var(--border-color);
-  overflow-y: auto;
-  background-color: white;
+  display:none;
 }
 
 .main-content {
@@ -76,16 +72,13 @@ html, body, #root {
 }
 
 .map-section {
-  flex: 1;
+  height: 360px; /* shrink the map vertically per request */
   position: relative;
 }
 
 .map-container {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
+  height: 100%;
 }
 
 .controls {

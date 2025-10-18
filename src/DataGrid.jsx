@@ -1,34 +1,40 @@
 import React from 'react';
 
-const DataGrid = ({ data, onRowClick }) => {
+const DataGrid = ({ data, onRowClick, columns: customColumns }) => {
   if (!data || data.length === 0) {
     return <p>No data to display</p>;
   }
 
-  const columns = [
+  // default columns if none provided
+  const defaultColumns = [
     { key: 'type', name: 'Type' },
     { key: 'time', name: 'Time' },
     { key: 'location', name: 'Location' },
     { key: 'summary', name: 'Summary' },
   ];
 
-  const getRowData = (row) => {
-    if(row._source === 'Crime'){
-      return {
-        type: 'Crime',
-        time: row.starttime || row.event_time || '',
-        location: row.location || row.address || '',
-        summary: row.nature || 'LW' || row.key || JSON.stringify(row),
-      }
+  const columns = customColumns && Array.isArray(customColumns) && customColumns.length>0 ? customColumns : defaultColumns;
+
+  const getCellValue = (row, key) => {
+    if(!row) return ''
+    const k = key || ''
+    // common aliases for time
+    if(k === 'time' || k === 'event_time' || k === 'starttime'){
+      return row.time || row.event_time || row.starttime || row.event || ''
     }
-    const isCad = (String(row._source || row.source || '').toLowerCase().includes('cadh')) || row._source === 'cadHandler';
-    return {
-      type: isCad ? 'CAD' : 'Arrest',
-      time: row.starttime || row.event_time || '',
-      location: row.address || row.location || '',
-      summary: row.nature || row.charge || row.description || '',
-    };
-  };
+    // prefer direct property
+    if(Object.prototype.hasOwnProperty.call(row, k)) return row[k]
+    // common fallbacks
+    if(k === 'location') return row.location || row.address || ''
+    if(k === 'summary') return row.nature || row.charge || row.description || row.crime || ''
+    if(k === 'type'){
+      if(row._source === 'Crime') return 'Crime'
+      const isCad = (String(row._source || row.source || '').toLowerCase().includes('cadh')) || row._source === 'cadHandler'
+      return isCad ? 'CAD' : 'Arrest'
+    }
+    // generic fallback to JSON string of value
+    return row[k] !== undefined ? row[k] : ''
+  }
 
   return (
     <table className="results-table">
@@ -42,14 +48,13 @@ const DataGrid = ({ data, onRowClick }) => {
       </thead>
       <tbody>
         {data.map((row, i) => {
-          const rowData = getRowData(row);
           return (
             <tr key={i} onClick={() => onRowClick(row)}>
               {columns.map((col) => (
-                <td key={col.key}>{rowData[col.key]}</td>
+                <td key={col.key}>{String(getCellValue(row, col.key) ?? '')}</td>
               ))}
               <td>
-                <button>Zoom</button>
+                <button type="button">Zoom</button>
               </td>
             </tr>
           );

@@ -10,9 +10,10 @@ export default function App(){
   const [selectedTable, setSelectedTable] = useState('')
   const [schema, setSchema] = useState(null)
   const [data, setData] = useState([])
+  const [mapPoints, setMapPoints] = useState([])
   const [limit, setLimit] = useState(100)
-  const [cadLimit, setCadLimit] = useState(100)
-  const [arrestLimit, setArrestLimit] = useState(100)
+  const [cadLimit, setCadLimit] = useState(20)
+  const [arrestLimit, setArrestLimit] = useState(20)
   const [filters, setFilters] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -26,9 +27,8 @@ export default function App(){
   const [crimeResults, setCrimeResults] = useState([])
   const [columnFilters, setColumnFilters] = useState({})
   const mapRef = React.useRef(null)
-  const [sidebarVisible, setSidebarVisible] = useState(true)
   const [chartsVisible, setChartsVisible] = useState(false)
-  const [crimeLimit, setCrimeLimit] = useState(100)
+  const [crimeLimit, setCrimeLimit] = useState(20)
 
   useEffect(()=>{
     // on mount: load per-table data from server using server-side queries
@@ -45,20 +45,43 @@ export default function App(){
         const combinedFilters = whereParts.join(' AND ')
 
         // query CAD and Arrests and Crime (Crime is derived from DailyBulletinArrests selecting key)
+        const arrColumns = ['charge','name','crime','location','event_time']
+        const crimeColumns = ['charge','name','crime','location','time']
         const [cadRes, arrRes, crimeRes] = await Promise.all([
           api.queryTable({table: 'cadHandler', limit: cadLimit, filters: combinedFilters}),
-          api.queryTable({table: 'DailyBulletinArrests', limit: arrestLimit, filters: combinedFilters}),
-          api.queryTable({table: 'DailyBulletinArrests', columns: ['key'], limit: crimeLimit, filters: combinedFilters})
+          api.queryTable({table: 'DailyBulletinArrests', columns: arrColumns, limit: arrestLimit, filters: combinedFilters}),
+          api.queryTable({table: 'DailyBulletinArrests', columns: crimeColumns, limit: crimeLimit, filters: combinedFilters})
         ])
 
-        const cadRows = cadRes && cadRes.success && cadRes.response && cadRes.response.data && cadRes.response.data.data ? cadRes.response.data.data : []
-        const arrRows = arrRes && arrRes.success && arrRes.response && arrRes.response.data && arrRes.response.data.data ? arrRes.response.data.data : []
-        const crimeRaw = crimeRes && crimeRes.success && crimeRes.response && crimeRes.response.data && crimeRes.response.data.data ? crimeRes.response.data.data : []
-        const crimeRows = crimeRaw.map(r => ({ ...r, _source: 'Crime', nature: 'LW', location: r.key || r.Key || JSON.stringify(r) }))
+  let cadRows = cadRes && cadRes.success && cadRes.response && cadRes.response.data && cadRes.response.data.data ? cadRes.response.data.data : []
+  let arrRows = arrRes && arrRes.success && arrRes.response && arrRes.response.data && arrRes.response.data.data ? arrRes.response.data.data : []
+  // annotate source so downstream slicing/filters detect them correctly
+  cadRows = cadRows.map(r => ({ ...r, _source: 'cadHandler' }))
+  arrRows = arrRows.map(r => ({ ...r, _source: 'DailyBulletinArrests' }))
+  const crimeRaw = crimeRes && crimeRes.success && crimeRes.response && crimeRes.response.data && crimeRes.response.data.data ? crimeRes.response.data.data : []
+  // normalize casing and keys
+  arrRows = arrRows.map(r => ({ ...r, event_time: r.event_time || r.event_time || r.event || r.eventTime || r.Event_Time || r['event_time'] }))
+  const crimeRows = crimeRaw.map(r => ({
+    ...r,
+    _source: 'Crime',
+    nature: r.nature || 'LW',
+    location: r.location || r.address || r.key || r.Key || '',
+    time: r.time || r.event_time || r.Event_Time || r.event || r['time'] || ''
+  }))
 
         const combined = [...cadRows, ...arrRows, ...crimeRows]
         setData(combined)
         setResults(combined)
+        // also fetch geocoded/converted points for the map (proxy /incidents does UTM->lat/lon and geocoding)
+        try{
+          const fetchLimit = Math.max(limit || 0, cadLimit || 0, arrestLimit || 0, crimeLimit || 0)
+          const geoRes = await getIncidents({limit: fetchLimit, distanceKm, centerLat, centerLng, dateFrom, dateTo})
+          const geoRows = geoRes && geoRes.response && geoRes.response.data && geoRes.response.data.data ? geoRes.response.data.data : []
+          setMapPoints(geoRows)
+        }catch(e){
+          console.warn('failed to fetch geocoded incidents for map', e)
+          setMapPoints([])
+        }
         setCadResults(cadRows)
         setArrestResults(arrRows)
         setCrimeResults(crimeRows)
@@ -122,6 +145,16 @@ export default function App(){
       setCadResults(cadRows)
       setArrestResults(arrRows)
       setCrimeResults(crimeRows)
+      // refresh map points from proxy /incidents (which will geocode/convert)
+      try{
+        const fetchLimit = Math.max(limit || 0, cadLimit || 0, arrestLimit || 0, crimeLimit || 0)
+        const geoRes = await getIncidents({limit: fetchLimit, distanceKm, centerLat, centerLng, dateFrom, dateTo})
+        const geoRows = geoRes && geoRes.response && geoRes.response.data && geoRes.response.data.data ? geoRes.response.data.data : []
+        setMapPoints(geoRows)
+      }catch(err){
+        console.warn('failed to refresh geocoded incidents for map', err)
+        setMapPoints([])
+      }
     }catch(e){
       console.error('runQuery per-table failed', e)
     }
@@ -162,104 +195,26 @@ export default function App(){
     <div className="app-container">
       <header className="header">
         <h1>Incidents Map — Dubuque, IA</h1>
-        <div>
-          <button onClick={() => setSidebarVisible(!sidebarVisible)}>
-            {sidebarVisible ? 'Hide' : 'Show'} Controls
-          </button>
+        <div style={{display:'flex', alignItems:'center', gap:12}}>
+          <label style={{color:'white'}}>Limit</label>
+          <input style={{width:80}} type="number" value={limit} min={1} max={1000} onChange={e => setLimit(Number(e.target.value))} />
+          <label style={{color:'white'}}>CAD</label>
+          <input style={{width:80}} type="number" value={cadLimit} min={1} max={1000} onChange={e => setCadLimit(Number(e.target.value))} />
+          <label style={{color:'white'}}>Arrests</label>
+          <input style={{width:80}} type="number" value={arrestLimit} min={1} max={1000} onChange={e => setArrestLimit(Number(e.target.value))} />
+          <label style={{color:'white'}}>Crime</label>
+          <input style={{width:80}} type="number" value={crimeLimit} min={1} max={1000} onChange={e => setCrimeLimit(Number(e.target.value))} />
+          <button onClick={runQuery} disabled={loading} style={{marginLeft:6}}>Search</button>
           <button onClick={() => setChartsVisible(!chartsVisible)}>
             {chartsVisible ? 'Hide' : 'Show'} Charts
           </button>
         </div>
       </header>
       <div className="content-container">
-        {sidebarVisible && (
-          <div className="sidebar">
-            <div className="controls">
-              {/* table selector removed — both tables are queried by default */}
-
-              <label>Limit</label>
-              <input type="number" value={limit} min={1} max={1000} onChange={e => setLimit(Number(e.target.value))} />
-
-              <div style={{display:'flex', gap:8, marginTop:8}}>
-                <div>
-                  <label>CAD page size</label>
-                  <input type="number" value={cadLimit} min={1} max={1000} onChange={e => setCadLimit(Number(e.target.value))} />
-                </div>
-                <div>
-                  <label>Arrests page size</label>
-                  <input type="number" value={arrestLimit} min={1} max={1000} onChange={e => setArrestLimit(Number(e.target.value))} />
-                </div>
-                <div>
-                  <label>Crime page size</label>
-                  <input type="number" value={crimeLimit} min={1} max={1000} onChange={e => setCrimeLimit(Number(e.target.value))} />
-                </div>
-              </div>
-
-              <label>Filters (quick, built from returned data)</label>
-              <div>
-                <small>Choose values to filter. These lists are built from the most-recent results.</small>
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <select value={columnFilters.nature || ''} onChange={e => setColumnFilters({ ...columnFilters, nature: e.target.value })}>
-                    <option value="">Nature (all)</option>
-                    {[...new Set(data.map(d => d.nature).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                  <select value={columnFilters.charge || ''} onChange={e => setColumnFilters({ ...columnFilters, charge: e.target.value })}>
-                    <option value="">Charge (all)</option>
-                    {[...new Set(data.map(d => d.charge).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                  <select value={columnFilters.location || ''} onChange={e => setColumnFilters({ ...columnFilters, location: e.target.value })}>
-                    <option value="">Location (all)</option>
-                    {[...new Set(data.map(d => d.location).filter(Boolean))].map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <label>Free-form SQL fragment (advanced)</label>
-                  <input value={filters} onChange={e => setFilters(e.target.value)} placeholder="e.g. starttime >= '2025-01-01'" />
-                </div>
-              </div>
-
-              <div className="date-row">
-                <div>
-                  <label>Date from</label>
-                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-                </div>
-                <div>
-                  <label>Date to</label>
-                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-                </div>
-              </div>
-
-              <h4>Distance filter (optional)</h4>
-              <div className="coord-row">
-                <div>
-                  <label>Center lat</label>
-                  <input value={centerLat} onChange={e => setCenterLat(e.target.value)} placeholder="42.5" />
-                </div>
-                <div>
-                  <label>Center lng</label>
-                  <input value={centerLng} onChange={e => setCenterLng(e.target.value)} placeholder="-90.7" />
-                </div>
-                <div>
-                  <label>Distance (km)</label>
-                  <input value={distanceKm} onChange={e => setDistanceKm(e.target.value)} placeholder="5" />
-                </div>
-                
-              </div>
-
-              <div className="actions">
-                <button onClick={runQuery} disabled={loading}>Search</button>
-                <div style={{display:'flex', gap:8, marginTop:8}}>
-                  <button onClick={centerDubuque} type="button">Center Dubuque</button>
-                  <button onClick={fitMarkers} type="button">Fit Markers</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
         <div className="main-content">
           <section className="map-section">
             <div className="map-container">
-              <MapView ref={mapRef} points={data} center={(centerLat && centerLng) ? [Number(centerLat), Number(centerLng)] : null} distanceKm={distanceKm ? Number(distanceKm) : null} zoomTo={pos => { if (mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14) }} onAreaSelect={({ lat, lng, radius }) => {
+              <MapView ref={mapRef} points={mapPoints} center={(centerLat && centerLng) ? [Number(centerLat), Number(centerLng)] : null} distanceKm={distanceKm ? Number(distanceKm) : null} zoomTo={pos => { if (mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14) }} onAreaSelect={({ lat, lng, radius }) => {
                 setCenterLat(lat);
                 setCenterLng(lng);
                 setDistanceKm(radius / 1000);
@@ -279,11 +234,11 @@ export default function App(){
               </div>
               <div className="results-panel" style={{flex:1}}>
                 <h4>DailyBulletinArrests (showing {arrestResults.length})</h4>
-                <DataGrid data={arrestResults} onRowClick={zoomToRow} />
+                <DataGrid data={arrestResults} onRowClick={zoomToRow} columns={[{key:'charge',name:'Charge'},{key:'name',name:'Name'},{key:'crime',name:'Crime'},{key:'location',name:'Location'},{key:'event_time',name:'Event Time'}]} />
               </div>
               <div className="results-panel" style={{flex:1}}>
                 <h4>Crime (showing {crimeResults.length})</h4>
-                <DataGrid data={crimeResults} onRowClick={zoomToRow} />
+                <DataGrid data={crimeResults} onRowClick={zoomToRow} columns={[{key:'charge',name:'Charge'},{key:'name',name:'Name'},{key:'crime',name:'Crime'},{key:'location',name:'Location'},{key:'time',name:'Time'}]} />
               </div>
             </div>
           </section>

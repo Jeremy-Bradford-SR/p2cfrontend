@@ -6,7 +6,8 @@ const cors = require('cors')
 
 const app = express()
 app.use(cors())
-app.use(bodyParser.json())
+// accept JSON objects and primitives (we allow a JSON string body containing the SQL)
+app.use(bodyParser.json({ strict: false }))
 
 // simple request logger
 app.use((req,res,next)=>{
@@ -87,14 +88,18 @@ app.get('/schema', async (req,res)=>{
 // Proxy for /query but enforce SELECT only
 app.post('/query', async (req,res)=>{
   try{
-    const sql = req.body
-    if(typeof sql !== 'string') return res.status(400).json({error:'SQL must be JSON string'})
+    // normalize incoming body: accept either a JSON string primitive or an object with { sql: '...' }
+    let sql = null
+    if(typeof req.body === 'string') sql = req.body
+    else if(req.body && typeof req.body.sql === 'string') sql = req.body.sql
+    else return res.status(400).json({error:'SQL must be provided as a JSON string or {sql:"..."}'})
+
     const s = sql.trim().toUpperCase()
-    if(!s.startsWith('"SELECT') && !s.startsWith('SELECT')){
+    if(!s.startsWith('SELECT')){
       return res.status(400).json({error:'Only SELECT queries allowed'})
     }
-    // forward raw body
-    console.log('forwarding query to API')
+    // forward the SQL string to upstream as a JSON string
+    console.log('forwarding query to API. SQL:', sql)
     const r = await axios.post(`${API_BASE}/query`, JSON.stringify(sql), {headers:{'Content-Type':'application/json'}})
     console.log('upstream query status', r.status)
     res.status(r.status).json(r.data)
@@ -126,12 +131,13 @@ app.get('/incidents', async (req,res)=>{
   try{
     // params: limit, distanceKm, centerLat, centerLng, dateFrom, dateTo
     const {limit=100, distanceKm, centerLat, centerLng, dateFrom, dateTo} = req.query
-  // fetch the 5 most recent cadHandler and 5 most recent DailyBulletinArrests for default view
-  console.log('fetching cadHandler from API (TOP 5 recent)')
-  const cadR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP 5 * FROM cadHandler ORDER BY starttime DESC`), {headers:{'Content-Type':'application/json'}})
+  // fetch recent cadHandler and DailyBulletinArrests rows (use provided limit)
+  const lim = Number(limit) || 100
+  console.log(`fetching cadHandler from API (TOP ${lim} recent)`)
+  const cadR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP ${lim} * FROM cadHandler ORDER BY starttime DESC`), {headers:{'Content-Type':'application/json'}})
   let cadRows = cadR.data && cadR.data.data ? cadR.data.data : []
-  console.log('fetching DailyBulletinArrests from API (TOP 5 recent)')
-  const dbR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP 5 * FROM DailyBulletinArrests ORDER BY event_time DESC`), {headers:{'Content-Type':'application/json'}})
+  console.log(`fetching DailyBulletinArrests from API (TOP ${lim} recent)`)
+  const dbR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP ${lim} * FROM DailyBulletinArrests ORDER BY event_time DESC`), {headers:{'Content-Type':'application/json'}})
   const dbRows = dbR.data && dbR.data.data ? dbR.data.data : []
 
     // geocode dbRows locations (cached)

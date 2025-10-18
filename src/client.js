@@ -9,6 +9,16 @@ function sanitizeIdentifier(id){
   return id
 }
 
+// Quote identifier parts for SQL Server-style identifiers, e.g. key -> [key], schema.table -> [schema].[table]
+function quoteIdentifier(id){
+  if(!id) return ''
+  // allow dot separated parts
+  return id.split('.').map(part=>{
+    sanitizeIdentifier(part)
+    return `[${part}]`
+  }).join('.')
+}
+
 async function listTables(){
   try{
     const url = `/tables`
@@ -32,12 +42,12 @@ async function getSchema(table){
 
 function buildSelectFromSchema(table, schema, columns, limit, filters){
   // schema expected as array of {name,type,skippable?}
-  const t = sanitizeIdentifier(table)
+  const t = quoteIdentifier(table)
   let cols = '*'
   if(columns && columns.length>0){
-    cols = columns.map(c=>sanitizeIdentifier(c)).join(', ')
+    cols = columns.map(c=>quoteIdentifier(c)).filter(Boolean).join(', ')
   }else if(schema && Array.isArray(schema)){
-    const good = schema.filter(c=>!c.skippable).map(c=>c.name)
+    const good = schema.filter(c=>!c.skippable).map(c=>quoteIdentifier(c.name)).filter(Boolean)
     if(good.length>0) cols = good.join(', ')
   }
   const lim = Math.min(limit || 100, 1000)
@@ -61,18 +71,26 @@ async function queryTable({table, columns, limit=100, filters=''}){
       // filter out skippable requested columns
       colsToUse = colsToUse.filter(c=>!(schema.find(s=>s.name===c) || {}).skippable)
     }
+  // quote column identifiers to handle reserved words (e.g. key) and remove any empty entries
+  colsToUse = colsToUse.map(c => quoteIdentifier(c)).filter(Boolean)
     let sql
-    const t = sanitizeIdentifier(table)
-    if(colsToUse.length===0){
+      const t = quoteIdentifier(table)
+    if(!colsToUse || colsToUse.length===0){
       sql = `SELECT TOP ${Math.min(limit,1000)} * FROM ${t}`
     }else{
-      sql = `SELECT TOP ${Math.min(limit,1000)} ${colsToUse.join(', ')} FROM ${t}`
+      const colsList = colsToUse.join(', ')
+      // final guard: if colsList is empty, fall back to *
+      if(!colsList.trim()){
+        sql = `SELECT TOP ${Math.min(limit,1000)} * FROM ${t}`
+      }else{
+        sql = `SELECT TOP ${Math.min(limit,1000)} ${colsList} FROM ${t}`
+      }
     }
     if(filters) sql += ` WHERE ${filters}`
 
-    const url = `${PROXY}/query`
-    const body = JSON.stringify(sql)
-    const r = await axios.post(url, body, {headers:{'Content-Type':'application/json'}})
+  const url = `${PROXY}/query`
+  const body = { sql }
+  const r = await axios.post(url, body, {headers:{'Content-Type':'application/json'}})
     return {success:true, request:{method:'POST', url, payload:sql}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'POST', url:`${BASE}/query`, payload:columns||null}, response:{error:e.message}}
