@@ -77,7 +77,6 @@ export default forwardRef(function MapView({points = [], center, distanceKm, zoo
   return (
     <MapContainer center={mapCenter} zoom={12} minZoom={11} maxZoom={18} maxBounds={MAX_BOUNDS} whenCreated={m=>{ if(ref) ref.current = m }} style={{height:'100%', width:'100%'}}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      {/* draw tools removed to avoid react-leaflet-draw dependency; add back if using compatible package */}
       <FitBounds points={markers} />
       <MarkerClusterGroup>
         {markers.map((m, idx) => (

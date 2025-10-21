@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import MapView from './MapView'
-import DataGrid from './DataGrid'
-import Charts from './Charts'
+import { Tabs, Tab } from './Tabs'
+import Incidents from './Incidents'
+import Arrests from './Arrests'
+import Offenders from './Offenders'
 import api, { getIncidents } from './client'
 
 export default function App(){
@@ -212,41 +213,33 @@ export default function App(){
       </header>
       <div className="content-container">
         <div className="main-content">
-          <section className="map-section">
-            <div className="map-container">
-              <MapView ref={mapRef} points={mapPoints} center={(centerLat && centerLng) ? [Number(centerLat), Number(centerLng)] : null} distanceKm={distanceKm ? Number(distanceKm) : null} zoomTo={pos => { if (mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14) }} onAreaSelect={({ lat, lng, radius }) => {
-                setCenterLat(lat);
-                setCenterLng(lng);
-                setDistanceKm(radius / 1000);
-              }} />
-            </div>
-          </section>
-
-          <section className="results-section">
-            <h3>Results (total: {results.length})</h3>
-            {loading && <div style={{ padding: 8, background: '#fffbe6', border: '1px solid #ffecb5' }}>Loading data...</div>}
-            {!loading && results.length === 0 && <div style={{ padding: 8, background: '#fff1f0', border: '1px solid #ffd1d1' }}>No results to display — check API connectivity or adjust filters.</div>}
-
-            <div className="results-grid three-columns" style={{display:'flex', gap:16}}>
-              <div className="results-panel" style={{flex:1}}>
-                <h4>CAD (showing {cadResults.length})</h4>
-                <DataGrid data={cadResults} onRowClick={zoomToRow} />
-              </div>
-              <div className="results-panel" style={{flex:1}}>
-                <h4>DailyBulletinArrests (showing {arrestResults.length})</h4>
-                <DataGrid data={arrestResults} onRowClick={zoomToRow} columns={[{key:'charge',name:'Charge'},{key:'name',name:'Name'},{key:'crime',name:'Crime'},{key:'location',name:'Location'},{key:'event_time',name:'Event Time'}]} />
-              </div>
-              <div className="results-panel" style={{flex:1}}>
-                <h4>Crime (showing {crimeResults.length})</h4>
-                <DataGrid data={crimeResults} onRowClick={zoomToRow} columns={[{key:'charge',name:'Charge'},{key:'name',name:'Name'},{key:'crime',name:'Crime'},{key:'location',name:'Location'},{key:'time',name:'Time'}]} />
-              </div>
-            </div>
-          </section>
-          {chartsVisible && (
-            <section className="charts-section">
-              <Charts data={results} />
-            </section>
-          )}
+          <Tabs>
+            <Tab label="Incidents">
+              <Incidents
+                mapRef={mapRef}
+                mapPoints={mapPoints}
+                centerLat={centerLat}
+                centerLng={centerLng}
+                distanceKm={distanceKm}
+                setCenterLat={setCenterLat}
+                setCenterLng={setCenterLng}
+                setDistanceKm={setDistanceKm}
+                results={results}
+                loading={loading}
+                cadResults={cadResults}
+                arrestResults={arrestResults}
+                crimeResults={crimeResults}
+                zoomToRow={zoomToRow}
+                chartsVisible={chartsVisible}
+              />
+            </Tab>
+            <Tab label="Arrests">
+              <Arrests />
+            </Tab>
+            <Tab label="Offenders">
+              <Offenders />
+            </Tab>
+          </Tabs>
         </div>
       </div>
     </div>
