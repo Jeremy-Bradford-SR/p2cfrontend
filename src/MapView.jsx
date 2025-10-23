@@ -12,9 +12,21 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
 })
 
+const createIcon = (color) => new L.Icon({
+    iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
 const icons = {
-  cadHandler: new L.Icon({iconUrl:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png', iconSize:[25,41], iconAnchor:[12,41]}),
-  DailyBulletinArrests: new L.Icon({iconUrl:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-red.png', iconSize:[25,41], iconAnchor:[12,41]})
+  cadHandler: createIcon('orange'),
+  DailyBulletinArrests: createIcon('black'),
+  Crime: createIcon('red'),
+  // Default icon
+  unknown: createIcon('blue')
 }
 
 function FitBounds({points}){
@@ -37,53 +49,39 @@ function haversineKm(lat1,lon1,lat2,lon2){
 }
 
 const DEFAULT_CENTER = [42.5006, -90.6646] // Dubuque, IA
-const MAX_BOUNDS = [[DEFAULT_CENTER[0]-0.3, DEFAULT_CENTER[1]-0.5],[DEFAULT_CENTER[0]+0.3, DEFAULT_CENTER[1]+0.5]]
+const MAX_BOUNDS = [[42.3, -91.0],[42.7, -90.3]]
 
 export default forwardRef(function MapView({points = [], center, distanceKm, zoomTo}, ref){
   const markers = useMemo(()=>{
     return (points || []).map(row=>{
-      // prefer lat/lon fields, then geox/geoy
-      const latRaw = row.lat ?? row.Lat
-      const lonRaw = row.lon ?? row.Lon
-      const geox = row.geox ?? row.Geox ?? row['geox']
-      const geoy = row.geoy ?? row.Geoy ?? row['geoy']
-
-      if(latRaw != null && lonRaw != null){
-        const lat = Number(latRaw), lng = Number(lonRaw)
-        if(Number.isFinite(lat) && Number.isFinite(lng)){
-          if(center && distanceKm){
-            if(haversineKm(center[0], center[1], lat, lng) > distanceKm) return null
-          }
-          return {lat, lng, row, source: row._source || row.source || 'unknown'}
+      // prefer lat/lon, but fall back to geoy/geox
+      let lat = row.lat ?? row.Lat ?? row.geoy ?? row.Geoy;
+      let lon = row.lon ?? row.Lon ?? row.geox ?? row.Geox;
+      const source = row._source || row.source || 'unknown';
+      
+      if (lat != null && lon != null) {
+        const latNum = Number(lat);
+        const lonNum = Number(lon);
+        if (isFinite(latNum) && isFinite(lonNum) && latNum !== 0 && lonNum !== 0) {
+          return { lat: latNum, lng: lonNum, row, source };
         }
       }
-
-      if(geox != null && geoy != null){
-        const lat = Number(geoy), lng = Number(geox)
-        if(Number.isFinite(lat) && Number.isFinite(lng)){
-          if(center && distanceKm){
-            if(haversineKm(center[0], center[1], lat, lng) > distanceKm) return null
-          }
-          return {lat, lng, row, source: row._source || row.source || 'cadHandler'}
-        }
-      }
-
       return null
     }).filter(Boolean)
-  },[points, center, distanceKm])
+  },[points])
 
   const mapCenter = (center && center.length===2) ? center : DEFAULT_CENTER
 
   return (
     <MapContainer center={mapCenter} zoom={12} minZoom={11} maxZoom={18} maxBounds={MAX_BOUNDS} whenCreated={m=>{ if(ref) ref.current = m }} style={{height:'100%', width:'100%'}}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      <FitBounds points={markers} />
+      {/* <FitBounds points={markers} /> */}
       <MarkerClusterGroup>
         {markers.map((m, idx) => (
           <Marker
             key={idx}
             position={[m.lat, m.lng]}
-            icon={icons[m.source] || icons.cadHandler}
+            icon={icons[m.source] || icons.unknown}
             eventHandlers={{
               click: ()=> { if(zoomTo) zoomTo([m.lat, m.lng]) },
               mouseover: (e) => { try { e.target.openPopup() } catch(_){} },

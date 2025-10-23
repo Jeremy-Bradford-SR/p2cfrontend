@@ -18,43 +18,8 @@ app.use((req,res,next)=>{
 // health
 app.get('/health', (req,res)=> res.json({ok:true}))
 
-const API_BASE = 'http://192.168.0.43:8083/api/data'
+const API_BASE = 'http://192.168.0.211:8083/api/data'
 const cache = new NodeCache({stdTTL: 60*60*24, checkperiod:120}) // 1 day TTL for geocoding
-
-// UTM to lat/lon conversion for Zone 18N (approximate)
-function utmToLatLon(easting, northing, zone=18, northernHemisphere=true){
-  // ported from common formulas — adequate for small-scale conversion
-  const a = 6378137.0
-  const e = 0.0818191908
-  const k0 = 0.9996
-  const x = easting - 500000.0
-  const y = northernHemisphere ? northing : northing - 10000000.0
-  const m = y / k0
-  const mu = m / (a * (1 - Math.pow(e,2)/4 - 3*Math.pow(e,4)/64 - 5*Math.pow(e,6)/256))
-  const e1 = (1 - Math.sqrt(1 - e*e)) / (1 + Math.sqrt(1 - e*e))
-  const j1 = (3*e1/2 - 27*Math.pow(e1,3)/32)
-  const j2 = (21*Math.pow(e1,2)/16 - 55*Math.pow(e1,4)/32)
-  const j3 = (151*Math.pow(e1,3)/96)
-  const j4 = (1097*Math.pow(e1,4)/512)
-  const fp = mu + j1*Math.sin(2*mu) + j2*Math.sin(4*mu) + j3*Math.sin(6*mu) + j4*Math.sin(8*mu)
-  const eSq = e*e / (1 - e*e)
-  const c1 = eSq * Math.pow(Math.cos(fp),2)
-  const t1 = Math.pow(Math.tan(fp),2)
-  const r1 = a * (1 - e*e) / Math.pow(1 - Math.pow(e*Math.sin(fp),2), 1.5)
-  const n1 = a / Math.sqrt(1 - Math.pow(e*Math.sin(fp),2))
-  const d = x / (n1 * k0)
-  const q1 = n1*Math.tan(fp)/r1
-  const q2 = (Math.pow(d,2)/2)
-  const q3 = (5 + 3*t1 + 10*c1 - 4*Math.pow(c1,2) - 9*eSq) * Math.pow(d,4)/24
-  const q4 = (61 + 90*t1 + 298*c1 + 45*Math.pow(t1,2) - 252*eSq - 3*Math.pow(c1,2)) * Math.pow(d,6)/720
-  const lat = fp - q1*(q2 - q3 + q4)
-  const q5 = d
-  const q6 = (1 + 2*t1 + c1) * Math.pow(d,3)/6
-  const q7 = (5 - 2*c1 + 28*t1 - 3*Math.pow(c1,2) + 8*eSq + 24*Math.pow(t1,2)) * Math.pow(d,5)/120
-  const lon = (d - q6 + q7)/Math.cos(fp)
-  const lonOrigin = (zone - 1)*6 - 180 + 3
-  return {lat: lat * 180/Math.PI, lon: lonOrigin + lon * 180/Math.PI}
-}
 
 function sanitizeIdentifier(id){
   if(!id) return ''
@@ -129,11 +94,11 @@ app.get('/geocode', async (req,res)=>{
 // Combined endpoint: fetch both tables, join geocoded coords for DailyBulletinArrests then return combined data
 app.get('/incidents', async (req,res)=>{
   try{
-    // params: limit, distanceKm, centerLat, centerLng, dateFrom, dateTo
-    const {limit=100, distanceKm, centerLat, centerLng, dateFrom, dateTo} = req.query
+    // params: limit, distanceKm, centerLat, centerLng, dateFrom, dateTo, filters
+    const {limit=100, distanceKm, centerLat, centerLng, dateFrom, dateTo, filters} = req.query
   // fetch recent cadHandler and DailyBulletinArrests rows (use provided limit)
   const lim = Number(limit) || 100
-  console.log(`fetching cadHandler from API (TOP ${lim} recent)`)
+  console.log(`fetching cadHandler from API (TOP ${lim} recent) with filters: ${filters}`)
   const cadR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP ${lim} * FROM cadHandler ORDER BY starttime DESC`), {headers:{'Content-Type':'application/json'}})
   let cadRows = cadR.data && cadR.data.data ? cadR.data.data : []
   console.log(`fetching DailyBulletinArrests from API (TOP ${lim} recent)`)
@@ -142,7 +107,6 @@ app.get('/incidents', async (req,res)=>{
 
     // geocode dbRows locations (cached)
   const geocoded = await Promise.all(dbRows.map(async row=>{
-      if(row.geox && row.geoy) return {...row, geox:row.geox, geoy:row.geoy}
       if(!row.location) return row
       const key = `geo:${row.location}`
       let g = cache.get(key)
@@ -159,23 +123,28 @@ app.get('/incidents', async (req,res)=>{
       return {...row, geox: g ? g.lon : null, geoy: g ? g.lat : null, lat: g ? g.lat : null, lon: g ? g.lon : null}
     }))
 
-    let combined = []
-    // convert cadHandler geox/geoy (UTM) to lat/lon if present
-    cadRows = cadRows.map(r=>{
-      const geox = r.geox || r.Geox || null
-      const geoy = r.geoy || r.Geoy || null
-      if(geox && geoy){
-        try{
-          const c = utmToLatLon(Number(geox), Number(geoy), 18, true)
-          return {...r, lat: c.lat, lon: c.lon}
-        }catch(e){
-          return r
+    // Process cadRows: convert UTM or geocode address
+    const processedCadRows = await Promise.all(cadRows.map(async r => {
+      // If no UTM, try geocoding the address/location
+      const address = r.location || r.address;
+      if (address) {
+        const key = `geo:${address}`;
+        let g = cache.get(key);
+        if (!g) {
+          try {
+            const geoRes = await axios.get('https://nominatim.openstreetmap.org/search', { params: { q: address, format: 'json', limit: 1, addressdetails: 0 }, headers: { 'User-Agent': 'p2c-frontend' } });
+            g = geoRes.data && geoRes.data[0] ? { lat: Number(geoRes.data[0].lat), lon: Number(geoRes.data[0].lon) } : null;
+            cache.set(key, g);
+            console.log('geocoded', address, '=>', g)
+          } catch (e) { g = null; }
         }
+        return { ...r, lat: g?.lat, lon: g?.lon, _source: 'cadHandler' };
       }
-      return r
-    })
+      return { ...r, _source: 'cadHandler' };
+    }));
 
-    combined = combined.concat(cadRows.map(r=>({...r, _source:'cadHandler'})))
+    let combined = []
+    combined = combined.concat(processedCadRows)
     combined = combined.concat(geocoded.map(r=>({...r, _source:'DailyBulletinArrests'})))
 
     // optional server-side distance filtering (if provided)
@@ -183,7 +152,7 @@ app.get('/incidents', async (req,res)=>{
       const dKm = Number(distanceKm)
       const lat0 = Number(centerLat)
       const lon0 = Number(centerLng)
-      function haversine(lat1,lon1,lat2,lon2){
+      const haversineKm = (lat1,lon1,lat2,lon2) => {
         const R = 6371
         const toRad = v=> v * Math.PI / 180
         const dLat = toRad(lat2-lat1)
@@ -192,7 +161,11 @@ app.get('/incidents', async (req,res)=>{
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
         return R * c
       }
-      combined = combined.filter(r=> r.geox && r.geoy && haversine(lat0, lon0, Number(r.geoy), Number(r.geox)) <= dKm)
+      combined = combined.filter(r=> {
+        const lat = r.lat || r.geoy;
+        const lon = r.lon || r.geox;
+        return lat != null && lon != null && haversineKm(lat0, lon0, Number(lat), Number(lon)) <= dKm;
+      })
     }
 
     res.json({data:combined})

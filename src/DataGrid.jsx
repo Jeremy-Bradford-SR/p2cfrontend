@@ -37,30 +37,28 @@ const DataGrid = ({ data, onRowClick, columns: customColumns }) => {
   }
 
   return (
-    <table className="results-table">
-      <thead>
-        <tr>
-          {columns.map((col) => (
-            <th key={col.key}>{col.name}</th>
-          ))}
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((row, i) => {
-          return (
-            <tr key={i} onClick={() => onRowClick(row)}>
-              {columns.map((col) => (
-                <td key={col.key}>{String(getCellValue(row, col.key) ?? '')}</td>
-              ))}
-              <td>
-                <button type="button">Zoom</button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="results-scroll">
+      <table className="results-table">
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th key={col.key}>{col.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, i) => {
+            return (
+              <tr key={i} onClick={() => onRowClick && onRowClick(row)}>
+                {columns.map((col) => (
+                  <td key={col.key}>{String(getCellValue(row, col.key) ?? '')}</td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 };
 

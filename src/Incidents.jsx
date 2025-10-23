@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import MapView from './MapView';
 import DataGrid from './DataGrid';
 import Charts from './Charts';
@@ -13,16 +13,44 @@ const Incidents = ({
   setCenterLng,
   setDistanceKm,
   results,
+  fitMarkers,
+  centerDubuque,
   loading,
   cadResults,
   arrestResults,
   crimeResults,
   zoomToRow,
-  chartsVisible,
+  reoffendersResults,
 }) => {
+  const [mapHeight, setMapHeight] = useState(360)
+  const dragging = useRef(false)
+  const startY = useRef(0)
+  const startHeight = useRef(360)
+
+  function onMouseDown(e){
+    dragging.current = true
+    startY.current = e.clientY
+    startHeight.current = mapHeight
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  function onMouseMove(e){
+    if(!dragging.current) return
+    const dy = e.clientY - startY.current
+    const newH = Math.max(120, startHeight.current + dy)
+    setMapHeight(newH)
+  }
+
+  function onMouseUp(){
+    dragging.current = false
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+  }
+  
   return (
     <div>
-      <section className="map-section">
+      <section className="map-section" style={{height: mapHeight}}>
         <div className="map-container">
           <MapView
             ref={mapRef}
@@ -36,6 +64,13 @@ const Incidents = ({
         </div>
       </section>
 
+      <div className="map-controls" style={{ padding: '8px', display: 'flex', gap: '8px', justifyContent: 'center', background: '#f0f0f0' }}>
+        <button onClick={fitMarkers}>Fit All Markers</button>
+        <button onClick={centerDubuque}>Center on Dubuque</button>
+      </div>
+
+      <div className="splitter" onMouseDown={onMouseDown} style={{height:8, cursor:'row-resize', background:'#eee'}} />
+
       <section className="results-section">
         <h3>Results (total: {results.length})</h3>
         {loading && <div style={{ padding: 8, background: '#fffbe6', border: '1px solid #ffecb5' }}>Loading data...</div>}
@@ -45,7 +80,7 @@ const Incidents = ({
           </div>
         )}
 
-        <div className="results-grid three-columns" style={{ display: 'flex', gap: 16 }}>
+        <div className="results-grid three-columns" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="results-panel" style={{ flex: 1 }}>
             <h4>CAD (showing {cadResults.length})</h4>
             <DataGrid data={cadResults} onRowClick={zoomToRow} />
@@ -80,11 +115,7 @@ const Incidents = ({
           </div>
         </div>
       </section>
-      {chartsVisible && (
-        <section className="charts-section">
-          <Charts data={results} />
-        </section>
-      )}
+      
     </div>
   );
 };

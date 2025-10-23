@@ -19,6 +19,12 @@ function quoteIdentifier(id){
   }).join('.')
 }
 
+function sanitizeOrderBy(orderBy) {
+  if (!orderBy) return '';
+  // Allow column names (including dots), spaces, commas, and ASC/DESC keywords
+  if (/[^a-zA-Z0-9_\.\s,DESCASC]/i.test(orderBy)) throw new Error('Invalid orderBy clause');
+  return orderBy;
+}
 async function listTables(){
   try{
     const url = `/tables`
@@ -56,7 +62,7 @@ function buildSelectFromSchema(table, schema, columns, limit, filters){
   return sql
 }
 
-async function queryTable({table, columns, limit=100, filters=''}){
+async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
   try{
     sanitizeIdentifier(table)
     // fetch schema first
@@ -87,6 +93,10 @@ async function queryTable({table, columns, limit=100, filters=''}){
       }
     }
     if(filters) sql += ` WHERE ${filters}`
+    if(orderBy) {
+      const safeOrderBy = sanitizeOrderBy(orderBy);
+      sql += ` ORDER BY ${safeOrderBy}`
+    }
 
   const url = `${PROXY}/query`
   const body = { sql }
@@ -113,6 +123,70 @@ async function getIncidents(opts={}){
   }
 }
 
-export default {listTables, getSchema, queryTable}
-// add getIncidents to the exported API
-export { getIncidents }
+async function getReoffenders() {
+  const sql = `
+SELECT
+    TOP 50
+    A.name AS ArrestRecordName,
+    A.charge AS ArrestCharge,
+    
+    -- Correlated Subquery for Original Offenses:
+    -- Finds all unique offenses associated with the offender's name
+    (SELECT 
+        STRING_AGG(T3.Offense, ', ') WITHIN GROUP (ORDER BY T3.Offense)
+     FROM 
+        dbo.Offender_Summary AS T1
+     JOIN 
+        (SELECT DISTINCT OffenderNumber, Offense FROM dbo.Offender_Detail WHERE Offense IS NOT NULL) AS T3 
+        ON T1.OffenderNumber = T3.OffenderNumber
+     WHERE 
+        T1.Name = S.Name -- Links to the 'S.Name' from the outer query
+    ) AS OriginalOffenses,
+
+    -- Correlated Subquery for Offender Numbers:
+    -- Finds all unique offender numbers associated with the offender's name
+    (SELECT 
+        STRING_AGG(T2.OffenderNumber, ', ') WITHIN GROUP (ORDER BY T2.OffenderNumber)
+     FROM 
+        (SELECT DISTINCT Name, OffenderNumber FROM dbo.Offender_Summary) AS T2
+     WHERE 
+        T2.Name = S.Name -- Links to the 'S.Name' from the outer query
+    ) AS OffenderNumbers,
+    
+    A.name AS ArrestRecordName,
+    A.event_time
+FROM
+    dbo.DailyBulletinArrests AS A
+INNER JOIN
+    dbo.Offender_Summary AS S ON S.Name = CONCAT_WS(' ', A.firstname, A.middlename, A.lastname)
+GROUP BY 
+    A.name,
+    A.charge,
+    A.event_time,
+    S.Name -- S.Name must be in GROUP BY because it's used in the subqueries
+ORDER BY 
+    A.event_time DESC;
+      `;
+  return rawQuery(sql);
+}
+
+export default {listTables, getSchema, queryTable, getIncidents, rawQuery, getReoffenders}
+
+// also export individually
+export { getIncidents, getReoffenders }
+
+// Run a raw SQL query string via the proxy /query endpoint. Caller must supply a full SELECT.
+async function rawQuery(sql){
+  try{
+    if(!sql || typeof sql !== 'string') throw new Error('sql must be a string')
+    // Basic safety: only allow SELECT queries
+    if(!/^[\s]*select/i.test(sql)) throw new Error('Only SELECT queries are allowed')
+    const url = `${PROXY}/query`
+    const r = await axios.post(url, { sql }, { headers: {'Content-Type':'application/json'} })
+    return { success: true, request: { method: 'POST', url, payload: sql }, response: { status: r.status, data: r.data } }
+  }catch(e){
+    return { success: false, request: { method: 'POST', url: `${PROXY}/query`, payload: sql }, response: { error: e.message } }
+  }
+}
+
+export { rawQuery }
