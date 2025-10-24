@@ -3,6 +3,7 @@ import { Tabs, Tab } from './Tabs'
 import Incidents from './Incidents'
 import Arrests from './Arrests'
 import Offenders from './Offenders'
+import Proximity from './Proximity'
 import api, { getIncidents } from './client'
 import DataGrid from './DataGrid' // 1. IMPORT DATAGRID
 
@@ -103,7 +104,12 @@ export default function App(){
     // We'll use this as the single source of truth for map points.
     const fetchMapData = async () => {
       const limit = recentCadLimit + recentArrestLimit + recentCrimeLimit;
-      const geoRes = await getIncidents({ limit, dateFrom, dateTo, filters });
+      let whereParts = []
+      if(dateFrom) whereParts.push(`starttime >= '${dateFrom}'`)
+      if(dateTo) whereParts.push(`starttime <= '${dateTo}'`)
+      if(filters) whereParts.push(`(${filters})`)
+      const combinedFilters = whereParts.join(' AND ')
+      const geoRes = await getIncidents({ limit, dateFrom, dateTo, filters: combinedFilters });
       const geoRows = geoRes?.response?.data?.data ?? [];
       setMapPoints(geoRows);
     };
@@ -201,24 +207,19 @@ export default function App(){
               />
             </Tab>
             <Tab label="Incidents">
-              {loading ? <div>Loading...</div> : <DataGrid data={cadResults} columns={incidentColumns} />}
+              {loading ? <div>Loading...</div> : <DataGrid data={cadResults.slice(0, 15)} columns={incidentColumns} />}
             </Tab>
             <Tab label="Crime">
-              {loading ? <div>Loading...</div> : <DataGrid data={crimeResults} columns={crimeColumns} />}
+              {loading ? <div>Loading...</div> : <DataGrid data={crimeResults.slice(0, 15)} columns={crimeColumns} />}
             </Tab>
             <Tab label="Arrests">
-              {loading ? <div>Loading...</div> : <DataGrid data={arrestResults} columns={arrestColumns} />}
+              {loading ? <div>Loading...</div> : <DataGrid data={arrestResults.slice(0, 15)} columns={arrestColumns} />}
             </Tab>
             <Tab label="Reoffenders">
-              {loading ? <div>Loading...</div> : <DataGrid data={reoffendersResults} columns={[
-                { key: 'ArrestRecordName', name: 'Arrest Name' },
-                { key: 'ArrestCharge', name: 'Arrest Charge' },
-                { key: 'OriginalOffenses', name: 'Original Offenses' },
-                { key: 'OffenderNumbers', name: 'Offender #s' },
-                { key: 'event_time', name: 'Event Time' }
-              ]}
-              />
-              }
+              <Offenders />
+            </Tab>
+            <Tab label="Proximity">
+              <Proximity />
             </Tab>
           </Tabs>
         </div>

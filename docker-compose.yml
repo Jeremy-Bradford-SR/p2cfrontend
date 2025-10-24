@@ -1,17 +1,23 @@
+version: '3.8'
+
 services:
   p2cfrontend:
     build:
       context: .
+      dockerfile: Dockerfile
     ports:
-      - "8004:8004"
+      - "8004:80"
+    # This line is crucial. It tells Docker to wait for the 'proxy' service
+    # to be running before starting this one.
     depends_on:
       - proxy
-    restart: unless-stopped
+
   proxy:
     build:
       context: ./proxy
+      dockerfile: Dockerfile
+    env_file:
+      - .env
     ports:
       - "9000:9000"
-    environment:
-      - NODE_ENV=production
-    restart: unless-stopped
+    # The proxy service does not need to be exposed to the host machine directly.

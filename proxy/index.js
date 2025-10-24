@@ -3,6 +3,7 @@ const axios = require('axios')
 const NodeCache = require('node-cache')
 const bodyParser = require('body-parser')
 const cors = require('cors')
+const proj4 = require('proj4')
 
 const app = express()
 app.use(cors())
@@ -15,16 +16,55 @@ app.use((req,res,next)=>{
   next()
 })
 
+// Add a global error handler for unhandled promise rejections to prevent silent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('!!! UNHANDLED REJECTION AT:', promise, 'REASON:', reason);
+  // Optionally, you might want to exit the process: process.exit(1);
+});
+
 // health
 app.get('/health', (req,res)=> res.json({ok:true}))
 
-const API_BASE = 'http://192.168.0.211:8083/api/data'
+// --- Coordinate System Definition for Iowa State Plane North (FIPS 1401, Feet) ---
+const IOWA_NORTH_NAD83_FTUS = "EPSG:2235";
+proj4.defs(IOWA_NORTH_NAD83_FTUS, '+proj=lcc +lat_0=41.5 +lon_0=-93.5 +lat_1=42.04 +lat_2=43.16 +x_0=1500000 +y_0=1000000 +ellps=GRS80 +datum=NAD83 +units=us-ft +no_defs');
+
+// Use an environment variable for the API base URL, with a default for local development.
+const API_BASE = process.env.P2C_API_BASE || 'http://192.168.0.211:8083/api/data'
 const cache = new NodeCache({stdTTL: 60*60*24, checkperiod:120}) // 1 day TTL for geocoding
 
 function sanitizeIdentifier(id){
   if(!id) return ''
   if(/[^a-zA-Z0-9_\.]/.test(id)) throw new Error('Invalid identifier')
   return id
+}
+
+async function geocodeAddress(address) {
+  if (!address) return null;
+
+  // Clean up address string for better geocoding results
+  const cleanedAddress = address
+    .replace(/-BLK/gi, ' ')      // "100-BLK" -> "100"
+    .replace(/\//g, ' and ')     // "ST A / ST B" -> "ST A and ST B"
+    .trim();
+
+  const key = `geo:${cleanedAddress}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  try {
+    const r = await axios.get('https://nominatim.openstreetmap.org/search', {
+      params: { q: cleanedAddress, format: 'json', limit: 1, addressdetails: 0 },
+      headers: { 'User-Agent': 'p2c-frontend' }
+    });
+    const out = r.data && r.data[0] ? { lat: Number(r.data[0].lat), lon: Number(r.data[0].lon) } : null;
+    cache.set(key, out);
+    console.log('geocoded', `"${address}" (as "${cleanedAddress}")`, '=>', out);
+    return out;
+  } catch (e) {
+    console.error(`Geocoding failed for "${cleanedAddress}":`, e.message);
+    return null;
+  }
 }
 
 app.get('/tables', async (req,res)=>{
@@ -78,74 +118,143 @@ app.post('/query', async (req,res)=>{
 app.get('/geocode', async (req,res)=>{
   const q = req.query.q
   if(!q) return res.status(400).json({error:'q query required'})
-  const key = `geo:${q}`
-  const cached = cache.get(key)
-  if(cached) return res.json(cached)
   try{
-    const r = await axios.get('https://nominatim.openstreetmap.org/search', {params:{q, format:'json', limit:1, addressdetails:0}, headers:{'User-Agent':'p2c-frontend'}})
-    const out = r.data && r.data[0] ? {lat: r.data[0].lat, lon: r.data[0].lon} : null
-    cache.set(key, out)
+    const out = await geocodeAddress(q);
     res.json(out)
   }catch(e){
     res.status(502).json({error:e.message})
   }
 })
 
+// Proximity search endpoint
+app.get('/proximity', async (req, res) => {
+  const { address, days = 7, distance = 1000, nature } = req.query;
+  if (!address) {
+    return res.status(400).json({ error: 'Address query parameter is required' });
+  }
+
+  try {
+    // 1. Geocode address to lat/lon
+    const coords = await geocodeAddress(address);
+
+    if (!coords) {
+      return res.status(404).json({ error: 'Address could not be geocoded.' });
+    }
+
+    // 2. Convert lat/lon to Iowa State Plane coordinates
+    const [geox, geoy] = proj4('WGS84', IOWA_NORTH_NAD83_FTUS, [coords.lon, coords.lat]);
+
+    // 3. Calculate start time
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days, 10));
+    const startTimeString = startDate.toISOString().slice(0, 19).replace('T', ' ');
+
+    // 4. Construct and execute the SQL query
+    const distanceFt = parseInt(distance, 10);
+    let whereClauses = [
+      `SQRT(POWER(CAST(geox AS FLOAT) - ${geox}, 2) + POWER(CAST(geoy AS FLOAT) - ${geoy}, 2)) <= ${distanceFt}`,
+      `starttime >= '${startTimeString}'`
+    ];
+    if (nature) whereClauses.push(`nature LIKE '%${nature.replace(/'/g, "''")}%'`);
+
+    const sql = `
+      SELECT TOP 50 id, starttime, closetime, agency, service, nature, address, geox, geoy,
+             SQRT(POWER(CAST(geox AS FLOAT) - ${geox}, 2) + POWER(CAST(geoy AS FLOAT) - ${geoy}, 2)) AS distance_ft
+      FROM cadHandler
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY starttime DESC, distance_ft ASC;
+    `;
+
+    console.log('Executing proximity query:', sql);
+    const r = await axios.post(`${API_BASE}/query`, JSON.stringify(sql), { headers: { 'Content-Type': 'application/json' } });
+    
+    // Format distance to 2 decimal places and convert geox/geoy back to lat/lon for the map
+    const results = (r.data?.data || []).map(row => ({
+      ...row,
+      distance_ft: row.distance_ft ? parseFloat(row.distance_ft).toFixed(2) : null,
+      ...(() => {
+        if (row.geox && row.geoy) {
+          const [lon, lat] = proj4(IOWA_NORTH_NAD83_FTUS, 'WGS84', [Number(row.geox), Number(row.geoy)]);
+          return { lat, lon };
+        }
+        return {};
+      })()
+    }));
+
+    res.status(r.status).json({ data: results });
+  } catch (e) {
+    if (e.response) return res.status(e.response.status).json({ error: e.response.data || e.response.statusText });
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // Combined endpoint: fetch both tables, join geocoded coords for DailyBulletinArrests then return combined data
 app.get('/incidents', async (req,res)=>{
   try{
-    // params: limit, distanceKm, centerLat, centerLng, dateFrom, dateTo, filters
-    const {limit=100, distanceKm, centerLat, centerLng, dateFrom, dateTo, filters} = req.query
+    // params: limit, distanceKm, centerLat, centerLng, dateFrom, dateTo
+    const {limit=100, distanceKm, centerLat, centerLng, dateFrom, dateTo, filters = ''} = req.query;
   // fetch recent cadHandler and DailyBulletinArrests rows (use provided limit)
-  const lim = Number(limit) || 100
-  console.log(`fetching cadHandler from API (TOP ${lim} recent) with filters: ${filters}`)
-  const cadR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP ${lim} * FROM cadHandler ORDER BY starttime DESC`), {headers:{'Content-Type':'application/json'}})
-  let cadRows = cadR.data && cadR.data.data ? cadR.data.data : []
-  console.log(`fetching DailyBulletinArrests from API (TOP ${lim} recent)`)
-  const dbR = await axios.post(`${API_BASE}/query`, JSON.stringify(`SELECT TOP ${lim} * FROM DailyBulletinArrests ORDER BY event_time DESC`), {headers:{'Content-Type':'application/json'}})
-  const dbRows = dbR.data && dbR.data.data ? dbR.data.data : []
+  const numLimit = Number(limit) || 100;
+  const perTypeLimit = Math.ceil(numLimit / 3);
+
+  // Create a separate filter for tables that use 'event_time' instead of 'starttime'
+  const dbFilters = (filters || '').replace(/starttime/g, 'event_time');
+
+  const buildQuery = (table, where = '', orderBy = 'starttime DESC') => {
+    let sql = `SELECT TOP ${perTypeLimit} * FROM ${table}`;
+    if (where) sql += ` WHERE ${where}`;
+    if (orderBy) sql += ` ORDER BY ${orderBy}`;
+    console.log(`[incidents] EXECUTING SQL for ${table}: ${sql}`);
+    return axios.post(`${API_BASE}/query`, JSON.stringify(sql), { headers: { 'Content-Type': 'application/json' } })
+      .catch(err => {
+        // Log errors from individual queries but don't crash. Return a mock success response.
+        console.error(`[incidents] ERROR: Upstream query failed for table ${table}. Status: ${err.response?.status}. Data:`, err.response?.data);
+        return { data: { data: [] } }; // Return an empty dataset on failure
+      });
+  };
+
+  console.log(`[incidents] INFO: Fetching data with filters: "${filters}" and dbFilters: "${dbFilters}"`);
+  const results = await Promise.all([
+    buildQuery('cadHandler', filters, 'starttime DESC'),
+    buildQuery('DailyBulletinArrests', dbFilters, 'event_time DESC'),
+    buildQuery('DailyBulletinArrests', `[key] = 'LW'${dbFilters ? ` AND (${dbFilters})` : ''}`, 'event_time DESC')
+  ]);
+  const [cadRes, arrestRes, crimeRes] = results;
+
+  console.log(`[incidents] INFO: Received from upstream: ${cadRes.data?.data?.length} CAD, ${arrestRes.data?.data?.length} Arrests, ${crimeRes.data?.data?.length} Crime`);
+
+  const cadRows = cadRes.data?.data || [];
+  const arrestRows = arrestRes.data?.data || [];
+  const crimeRows = crimeRes.data?.data || [];
 
     // geocode dbRows locations (cached)
-  const geocoded = await Promise.all(dbRows.map(async row=>{
+  const geocodeAndTag = async (row, source) => {
       if(!row.location) return row
-      const key = `geo:${row.location}`
-      let g = cache.get(key)
-      if(!g){
-        try{
-          const r = await axios.get('https://nominatim.openstreetmap.org/search', {params:{q: row.location, format:'json', limit:1}, headers:{'User-Agent':'p2c-frontend'}})
-          g = r.data && r.data[0] ? {lat: Number(r.data[0].lat), lon: Number(r.data[0].lon)} : null
-          cache.set(key,g)
-          console.log('geocoded', row.location, '=>', g)
-        }catch(e){
-          g = null
-        }
-      }
-      return {...row, geox: g ? g.lon : null, geoy: g ? g.lat : null, lat: g ? g.lat : null, lon: g ? g.lon : null}
-    }))
+      const g = await geocodeAddress(row.location);
+    return { ...row, lat: g?.lat, lon: g?.lon, _source: source };
+  };
+
+  console.log('[incidents] INFO: Geocoding arrest and crime records...');
+  const geocodedArrests = await Promise.all(arrestRows.map(row => geocodeAndTag(row, 'DailyBulletinArrests')));
+  const geocodedCrime = await Promise.all(crimeRows.map(row => geocodeAndTag(row, 'Crime')));
 
     // Process cadRows: convert UTM or geocode address
+    console.log('[incidents] INFO: Geocoding CAD records...');
     const processedCadRows = await Promise.all(cadRows.map(async r => {
       // If no UTM, try geocoding the address/location
       const address = r.location || r.address;
       if (address) {
-        const key = `geo:${address}`;
-        let g = cache.get(key);
-        if (!g) {
-          try {
-            const geoRes = await axios.get('https://nominatim.openstreetmap.org/search', { params: { q: address, format: 'json', limit: 1, addressdetails: 0 }, headers: { 'User-Agent': 'p2c-frontend' } });
-            g = geoRes.data && geoRes.data[0] ? { lat: Number(geoRes.data[0].lat), lon: Number(geoRes.data[0].lon) } : null;
-            cache.set(key, g);
-            console.log('geocoded', address, '=>', g)
-          } catch (e) { g = null; }
-        }
+        const g = await geocodeAddress(address);
         return { ...r, lat: g?.lat, lon: g?.lon, _source: 'cadHandler' };
       }
       return { ...r, _source: 'cadHandler' };
     }));
 
+    console.log('[incidents] INFO: Combining and filtering results...');
     let combined = []
-    combined = combined.concat(processedCadRows)
-    combined = combined.concat(geocoded.map(r=>({...r, _source:'DailyBulletinArrests'})))
+    combined = combined.concat(processedCadRows);
+    combined = combined.concat(geocodedArrests);
+    combined = combined.concat(geocodedCrime);
 
     // optional server-side distance filtering (if provided)
     if(distanceKm && centerLat && centerLng){
@@ -168,8 +277,10 @@ app.get('/incidents', async (req,res)=>{
       })
     }
 
+    console.log(`[incidents] SUCCESS: Sending ${combined.length} combined records to client.`);
     res.json({data:combined})
   }catch(e){
+    console.error('[incidents] FATAL: An unexpected error occurred in the /incidents handler:', e);
     res.status(502).json({error:e.message})
   }
 })

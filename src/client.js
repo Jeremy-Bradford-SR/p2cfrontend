@@ -67,7 +67,7 @@ async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
     sanitizeIdentifier(table)
     // fetch schema first
   const schemaRes = await axios.get(`${PROXY}/schema?table=${encodeURIComponent(table)}`)
-    if(schemaRes.status>=400) return {success:false, request:{method:'GET', url:`${BASE}/schema?table=${table}`}, response:{status:schemaRes.status, text:schemaRes.data}}
+    if(schemaRes.status>=400) return {success:false, request:{method:'GET', url:`${PROXY}/schema?table=${table}`}, response:{status:schemaRes.status, text:schemaRes.data}}
     const schema = schemaRes.data
   // build columns excluding skippable
     let colsToUse = columns
@@ -103,7 +103,7 @@ async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
   const r = await axios.post(url, body, {headers:{'Content-Type':'application/json'}})
     return {success:true, request:{method:'POST', url, payload:sql}, response:{status:r.status, data:r.data}}
   }catch(e){
-    return {success:false, request:{method:'POST', url:`${BASE}/query`, payload:columns||null}, response:{error:e.message}}
+    return {success:false, request:{method:'POST', url:`${PROXY}/query`, payload:columns||null}, response:{error:e.message}}
   }
 }
 
@@ -115,11 +115,27 @@ async function getIncidents(opts={}){
   if(opts.centerLng) params.set('centerLng', opts.centerLng)
   if(opts.dateFrom) params.set('dateFrom', opts.dateFrom)
   if(opts.dateTo) params.set('dateTo', opts.dateTo)
+  if(opts.filters) params.set('filters', opts.filters)
   try{
     const r = await axios.get(`${PROXY}/incidents?${params.toString()}`)
     return {success:true, request:{method:'GET', url:`${PROXY}/incidents?${params.toString()}`}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'GET', url:`${PROXY}/incidents`}, response:{error:e.message}}
+  }
+}
+
+async function proximitySearch({ address, days, nature, distance }) {
+  try {
+    const params = new URLSearchParams();
+    if (address) params.set('address', address);
+    if (days) params.set('days', days);
+    if (nature) params.set('nature', nature);
+    if (distance) params.set('distance', distance);
+    const url = `${PROXY}/proximity?${params.toString()}`;
+    const r = await axios.get(url);
+    return { success: true, request: { method: 'GET', url }, response: { status: r.status, data: r.data } };
+  } catch (e) {
+    return { success: false, request: { method: 'GET', url: `${PROXY}/proximity` }, response: { error: e.message, data: e.response?.data } };
   }
 }
 
@@ -170,10 +186,10 @@ ORDER BY
   return rawQuery(sql);
 }
 
-export default {listTables, getSchema, queryTable, getIncidents, rawQuery, getReoffenders}
+export default {listTables, getSchema, queryTable, getIncidents, rawQuery, getReoffenders, proximitySearch}
 
 // also export individually
-export { getIncidents, getReoffenders }
+export { getIncidents, getReoffenders, proximitySearch }
 
 // Run a raw SQL query string via the proxy /query endpoint. Caller must supply a full SELECT.
 async function rawQuery(sql){

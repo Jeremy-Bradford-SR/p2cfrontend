@@ -27,9 +27,10 @@ const Offenders = () => {
       <DataGrid
         data={offenders}
         columns={[
-          { key: 'ArrestRecordName', name: 'Arrest Name' },          
-          { key: 'OffenderRecordName', name: 'Offender Name' },
-          { key: 'charge', name: 'Charge' },
+          { key: 'ArrestRecordName', name: 'Arrest Name' },
+          { key: 'ArrestCharge', name: 'Arrest Charge' },
+          { key: 'OriginalOffenses', name: 'Original Offenses' },
+          { key: 'OffenderNumbers', name: 'Offender #s' },
           { key: 'event_time', name: 'Event Time' }
         ]}
       />
