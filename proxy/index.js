@@ -1,9 +1,21 @@
+require('dotenv').config();
 const express = require('express')
 const axios = require('axios')
 const NodeCache = require('node-cache')
 const bodyParser = require('body-parser')
 const cors = require('cors')
 const proj4 = require('proj4')
+const jwt = require('jsonwebtoken')
+const ldap = require('ldapjs');
+
+const {
+  LDAP_URL,
+  LDAP_BIND_DN,
+  LDAP_BIND_PASSWORD,
+  LDAP_SEARCH_BASE,
+} = process.env;
+
+const JWT_SECRET = process.env.JWT_SECRET || 'a-very-secret-key-that-you-should-change';
 
 const app = express()
 app.use(cors())
@@ -16,6 +28,26 @@ app.use((req,res,next)=>{
   next()
 })
 
+// JWT Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  // Allow health check and login endpoints to pass without a token
+  if (req.path === '/health' || req.path === '/login') {
+    return next();
+  }
+
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (token == null) return res.sendStatus(401); // if there isn't any token
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403); // if token is no longer valid
+    req.user = user;
+    next(); // proceed to the next middleware
+  });
+};
+app.use(authenticateToken);
+
 // Add a global error handler for unhandled promise rejections to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
   console.error('!!! UNHANDLED REJECTION AT:', promise, 'REASON:', reason);
@@ -25,12 +57,53 @@ process.on('unhandledRejection', (reason, promise) => {
 // health
 app.get('/health', (req,res)=> res.json({ok:true}))
 
+// Login endpoint
+app.post('/login', (req, res) => {
+  if (!LDAP_URL || !LDAP_SEARCH_BASE) {
+    console.error('LDAP environment variables are not configured for the proxy server.');
+    return res.status(500).json({ message: 'Authentication service is not configured.' });
+  }
+
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required.' });
+  }
+
+  const client = ldap.createClient({
+    url: LDAP_URL,
+    tlsOptions: {
+      rejectUnauthorized: false
+    }
+  });
+
+  // For 389-DS, we can often bind directly with the user's constructed DN.
+  // This is simpler than the search-then-bind pattern needed for Active Directory.
+  const userDn = `uid=${username},${LDAP_SEARCH_BASE}`;
+
+  // Attempt to bind with the user's credentials.
+  client.bind(userDn, password, (bindErr) => {
+    if (bindErr) {
+      // This will fail if the user DN is wrong, password is bad, or user doesn't exist.
+      console.error(`LDAP auth failed for user: ${username}`, bindErr);
+      // Provide a generic message for security.
+      return res.status(401).json({ message: 'Invalid credentials or user not found.' });
+    }
+
+    // If the bind is successful, authentication is valid.
+    console.log(`LDAP auth successful for user: ${username}`);
+    const token = jwt.sign({ username: username }, JWT_SECRET, { expiresIn: '8h' });
+    res.json({ token });
+    client.unbind();
+  });
+});
+
 // --- Coordinate System Definition for Iowa State Plane North (FIPS 1401, Feet) ---
 const IOWA_NORTH_NAD83_FTUS = "EPSG:2235";
 proj4.defs(IOWA_NORTH_NAD83_FTUS, '+proj=lcc +lat_0=41.5 +lon_0=-93.5 +lat_1=42.04 +lat_2=43.16 +x_0=1500000 +y_0=1000000 +ellps=GRS80 +datum=NAD83 +units=us-ft +no_defs');
 
 // Use an environment variable for the API base URL, with a default for local development.
-const API_BASE = process.env.P2C_API_BASE || 'http://192.168.0.211:8083/api/data'
+const API_BASE = process.env.P2C_API_BASE || 'http://192.168.0.211:8083/api/Data'
 const cache = new NodeCache({stdTTL: 60*60*24, checkperiod:120}) // 1 day TTL for geocoding
 
 function sanitizeIdentifier(id){

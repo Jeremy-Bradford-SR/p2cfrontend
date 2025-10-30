@@ -4,10 +4,11 @@ import Incidents from './Incidents'
 import Arrests from './Arrests'
 import Offenders from './Offenders'
 import Proximity from './Proximity'
+import Login from './Login'
 import api, { getIncidents } from './client'
 import DataGrid from './DataGrid' // 1. IMPORT DATAGRID
 
-export default function App(){
+function AppContent() {
   const [tables, setTables] = useState([])
   // we query both tables by default; table selector removed
   const [selectedTable, setSelectedTable] = useState('')
@@ -179,7 +180,14 @@ export default function App(){
     <div className="app-container">
       <header className="header">
         <h1>Incidents Map — Dubuque, IA</h1>
-        <div style={{display:'flex', alignItems:'center', gap:12}} />
+        <div style={{display:'flex', alignItems:'center', gap:12}}>
+          <button onClick={() => {
+            localStorage.removeItem('p2c-token');
+            window.location.reload();
+          }}>
+            Logout
+          </button>
+        </div>
       </header>
       <div className="content-container">
         <div className="main-content">
@@ -226,4 +234,18 @@ export default function App(){
       </div>
     </div>
   )
+}
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('p2c-token'));
+
+  const handleLoginSuccess = () => {
+    setIsAuthenticated(true);
+  };
+
+  if (!isAuthenticated) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  return <AppContent />;
 }

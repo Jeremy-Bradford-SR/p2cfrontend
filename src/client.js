@@ -1,5 +1,19 @@
 import axios from 'axios'
 
+// Create an axios instance
+const api = axios.create();
+
+// Add a request interceptor to include the token in all requests
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('p2c-token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, error => {
+  return Promise.reject(error);
+});
+
 // Use same-origin API path; nginx will reverse-proxy /api to the proxy service in docker-compose
 const PROXY = '/api'
 
@@ -28,7 +42,7 @@ function sanitizeOrderBy(orderBy) {
 async function listTables(){
   try{
     const url = `/tables`
-    const r = await axios.get(`${PROXY}/tables`)
+    const r = await api.get(`${PROXY}/tables`)
     return {success:true, request:{method:'GET', url:`${PROXY}/tables`}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'GET', url:`${PROXY}/tables`}, response:{error:e.message}}
@@ -39,7 +53,7 @@ async function getSchema(table){
   try{
     sanitizeIdentifier(table)
     const url = `${PROXY}/schema?table=${encodeURIComponent(table)}`
-    const r = await axios.get(url)
+    const r = await api.get(url)
     return {success:true, request:{method:'GET', url}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'GET', url:`${PROXY}/schema?table=${table}`}, response:{error:e.message}}
@@ -66,7 +80,7 @@ async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
   try{
     sanitizeIdentifier(table)
     // fetch schema first
-  const schemaRes = await axios.get(`${PROXY}/schema?table=${encodeURIComponent(table)}`)
+  const schemaRes = await api.get(`${PROXY}/schema?table=${encodeURIComponent(table)}`)
     if(schemaRes.status>=400) return {success:false, request:{method:'GET', url:`${PROXY}/schema?table=${table}`}, response:{status:schemaRes.status, text:schemaRes.data}}
     const schema = schemaRes.data
   // build columns excluding skippable
@@ -100,7 +114,7 @@ async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
 
   const url = `${PROXY}/query`
   const body = { sql }
-  const r = await axios.post(url, body, {headers:{'Content-Type':'application/json'}})
+  const r = await api.post(url, body, {headers:{'Content-Type':'application/json'}})
     return {success:true, request:{method:'POST', url, payload:sql}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'POST', url:`${PROXY}/query`, payload:columns||null}, response:{error:e.message}}
@@ -117,7 +131,7 @@ async function getIncidents(opts={}){
   if(opts.dateTo) params.set('dateTo', opts.dateTo)
   if(opts.filters) params.set('filters', opts.filters)
   try{
-    const r = await axios.get(`${PROXY}/incidents?${params.toString()}`)
+    const r = await api.get(`${PROXY}/incidents?${params.toString()}`)
     return {success:true, request:{method:'GET', url:`${PROXY}/incidents?${params.toString()}`}, response:{status:r.status, data:r.data}}
   }catch(e){
     return {success:false, request:{method:'GET', url:`${PROXY}/incidents`}, response:{error:e.message}}
@@ -132,7 +146,7 @@ async function proximitySearch({ address, days, nature, distance }) {
     if (nature) params.set('nature', nature);
     if (distance) params.set('distance', distance);
     const url = `${PROXY}/proximity?${params.toString()}`;
-    const r = await axios.get(url);
+    const r = await api.get(url);
     return { success: true, request: { method: 'GET', url }, response: { status: r.status, data: r.data } };
   } catch (e) {
     return { success: false, request: { method: 'GET', url: `${PROXY}/proximity` }, response: { error: e.message, data: e.response?.data } };
@@ -198,7 +212,7 @@ async function rawQuery(sql){
     // Basic safety: only allow SELECT queries
     if(!/^[\s]*select/i.test(sql)) throw new Error('Only SELECT queries are allowed')
     const url = `${PROXY}/query`
-    const r = await axios.post(url, { sql }, { headers: {'Content-Type':'application/json'} })
+    const r = await api.post(url, { sql }, { headers: {'Content-Type':'application/json'} })
     return { success: true, request: { method: 'POST', url, payload: sql }, response: { status: r.status, data: r.data } }
   }catch(e){
     return { success: false, request: { method: 'POST', url: `${PROXY}/query`, payload: sql }, response: { error: e.message } }
