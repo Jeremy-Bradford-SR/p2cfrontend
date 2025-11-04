@@ -17,7 +17,8 @@
       "env": {
         "NODE_ENV": "development",
         "PORT": "9000",
-        "P2C_API_BASE": "http://192.168.0.211:8083/api/Data"
+        "P2C_API_BASE": "http://192.168.0.211:8083/api/data",
+        "NOMINATIM_URL": "http://192.168.0.212:8080/search"
       }
     },
     {

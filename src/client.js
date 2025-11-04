@@ -200,8 +200,6 @@ ORDER BY
   return rawQuery(sql);
 }
 
-export default {listTables, getSchema, queryTable, getIncidents, rawQuery, getReoffenders, proximitySearch}
-
 // also export individually
 export { getIncidents, getReoffenders, proximitySearch }
 
@@ -219,4 +217,6 @@ async function rawQuery(sql){
   }
 }
 
-export { rawQuery }
+export { rawQuery };
+
+export default {listTables, getSchema, queryTable, getIncidents, getReoffenders, proximitySearch, rawQuery};
