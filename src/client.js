@@ -78,52 +78,30 @@ function buildSelectFromSchema(table, schema, columns, limit, filters){
 
 async function queryTable({table, columns, limit=100, filters='', orderBy=''}){
   try{
-    sanitizeIdentifier(table)
-    // fetch schema first
-  const schemaRes = await api.get(`${PROXY}/schema?table=${encodeURIComponent(table)}`)
-    if(schemaRes.status>=400) return {success:false, request:{method:'GET', url:`${PROXY}/schema?table=${table}`}, response:{status:schemaRes.status, text:schemaRes.data}}
-    const schema = schemaRes.data
-  // build columns excluding skippable
-    let colsToUse = columns
-    if(!colsToUse || colsToUse.length===0){
-      colsToUse = schema.filter(c=>!c.skippable).map(c=>c.name)
-    }else{
-      // filter out skippable requested columns
-      colsToUse = colsToUse.filter(c=>!(schema.find(s=>s.name===c) || {}).skippable)
-    }
-  // quote column identifiers to handle reserved words (e.g. key) and remove any empty entries
-  colsToUse = colsToUse.map(c => quoteIdentifier(c)).filter(Boolean)
-    let sql
-      const t = quoteIdentifier(table)
-    if(!colsToUse || colsToUse.length===0){
-      sql = `SELECT TOP ${Math.min(limit,1000)} * FROM ${t}`
-    }else{
-      const colsList = colsToUse.join(', ')
-      // final guard: if colsList is empty, fall back to *
-      if(!colsList.trim()){
-        sql = `SELECT TOP ${Math.min(limit,1000)} * FROM ${t}`
-      }else{
-        sql = `SELECT TOP ${Math.min(limit,1000)} ${colsList} FROM ${t}`
-      }
-    }
-    if(filters) sql += ` WHERE ${filters}`
-    if(orderBy) {
-      const safeOrderBy = sanitizeOrderBy(orderBy);
-      sql += ` ORDER BY ${safeOrderBy}`
+    const params = new URLSearchParams({
+      table,
+      limit,
+      filters,
+      orderBy
+    });
+    if (columns && columns.length > 0) {
+      params.set('columns', columns.join(','));
     }
 
-  const url = `${PROXY}/query`
-  const body = { sql }
-  const r = await api.post(url, body, {headers:{'Content-Type':'application/json'}})
-    return {success:true, request:{method:'POST', url, payload:sql}, response:{status:r.status, data:r.data}}
+    const url = `${PROXY}/query?${params.toString()}`;
+    const r = await api.get(url);
+    return {success:true, request:{method:'GET', url}, response:{status:r.status, data:r.data}}
   }catch(e){
-    return {success:false, request:{method:'POST', url:`${PROXY}/query`, payload:columns||null}, response:{error:e.message}}
+    const errorUrl = `${PROXY}/query?table=${table}&limit=${limit}&filters=${filters}&orderBy=${orderBy}`;
+    return {success:false, request:{method:'GET', url:errorUrl}, response:{error:e.message}}
   }
 }
 
 async function getIncidents(opts={}){
   const params = new URLSearchParams()
-  if(opts.limit) params.set('limit', opts.limit)
+  if(opts.cadLimit) params.set('cadLimit', opts.cadLimit);
+  if(opts.arrestLimit) params.set('arrestLimit', opts.arrestLimit);
+  if(opts.crimeLimit) params.set('crimeLimit', opts.crimeLimit);
   if(opts.distanceKm) params.set('distanceKm', opts.distanceKm)
   if(opts.centerLat) params.set('centerLat', opts.centerLat)
   if(opts.centerLng) params.set('centerLng', opts.centerLng)
@@ -209,11 +187,12 @@ async function rawQuery(sql){
     if(!sql || typeof sql !== 'string') throw new Error('sql must be a string')
     // Basic safety: only allow SELECT queries
     if(!/^[\s]*select/i.test(sql)) throw new Error('Only SELECT queries are allowed')
-    const url = `${PROXY}/query`
-    const r = await api.post(url, { sql }, { headers: {'Content-Type':'application/json'} })
-    return { success: true, request: { method: 'POST', url, payload: sql }, response: { status: r.status, data: r.data } }
+    const params = new URLSearchParams({ sql });
+    const url = `${PROXY}/rawQuery?${params.toString()}`;
+    const r = await api.get(url);
+    return { success: true, request: { method: 'GET', url }, response: { status: r.status, data: r.data } }
   }catch(e){
-    return { success: false, request: { method: 'POST', url: `${PROXY}/query`, payload: sql }, response: { error: e.message } }
+    return { success: false, request: { method: 'GET', url: `${PROXY}/rawQuery?sql=${encodeURIComponent(sql)}` }, response: { error: e.message } }
   }
 }
 

@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import api, { rawQuery, proximitySearch } from './client';
-import DataGrid from './DataGrid';
-import MapView from './MapView';
+import React, { useState, useEffect } from 'react';
+import api from './client';
+import MapWithData from './MapWithData';
 
 const Proximity = () => {
   const [address, setAddress] = useState('');
@@ -11,34 +10,6 @@ const Proximity = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const mapRef = useRef(null);
-  const [mapPoints, setMapPoints] = useState([]);
-
-  // On component mount, fetch a default set of results using the provided query.
-  useEffect(() => {
-    const fetchDefaultResults = async () => {
-      setLoading(true);
-      setError('');
-      const defaultSql = `
-        SELECT TOP 50 id, starttime, closetime, agency, service, nature, address, geox, geoy,
-               SQRT(POWER(CAST(geox AS FLOAT) - 5683042.00, 2) + POWER(CAST(geoy AS FLOAT) - 3662363.00, 2)) AS distance_ft
-        FROM cadHandler
-        WHERE SQRT(POWER(CAST(geox AS FLOAT) - 5683042.00, 2) + POWER(CAST(geoy AS FLOAT) - 3662363.00, 2)) <= 1000
-          AND starttime >= '2025-09-28 00:00:00'
-        ORDER BY starttime DESC, distance_ft ASC;
-      `;
-      const res = await rawQuery(defaultSql);
-      if (res.success) {
-        const data = res.response.data.data || [];
-        setResults(data);
-        setMapPoints(res.response.data.data || []);
-      } else {
-        setError('Failed to load default proximity results.');
-      }
-      setLoading(false);
-    };
-    fetchDefaultResults();
-  }, []);
 
   const handleSearch = async () => {
     if (!address) {
@@ -54,7 +25,6 @@ const Proximity = () => {
     if (res.success) {
       const data = res.response.data.data || [];
       setResults(data);
-      setMapPoints(data);
       if (data.length === 0) {
         setError('No results found for that address and time frame.');
       }
@@ -64,10 +34,6 @@ const Proximity = () => {
     }
     setLoading(false);
   };
-
-  function zoomToRow(r) {
-    if (mapRef.current && r.lat && r.lon) mapRef.current.setView([Number(r.lat), Number(r.lon)], 16);
-  }
 
   const columns = [
     { key: 'starttime', name: 'Start Time' },
@@ -79,9 +45,7 @@ const Proximity = () => {
 
   return (
     <div>
-      <div style={{ height: '360px' }}>
-        <MapView ref={mapRef} points={mapPoints} zoomTo={zoomToRow} />
-      </div>
+      <MapWithData data={results} columns={columns} loading={loading} />
       <div style={{ padding: '1.5rem' }}>
         <h3>Proximity Search</h3>
         <p>Find incidents near an address.</p>
@@ -126,7 +90,6 @@ const Proximity = () => {
         </div>
         {error && <div style={{ color: 'red', marginBottom: '1rem' }}>{error}</div>}
         {loading && <div>Loading results...</div>}
-        {!loading && results.length > 0 && <DataGrid data={results} columns={columns} onRowClick={zoomToRow} />}
       </div>
     </div>
   );

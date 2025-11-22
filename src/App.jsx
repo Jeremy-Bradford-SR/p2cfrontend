@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import axios from 'axios';
 import { Tabs, Tab } from './Tabs'
 import Incidents from './Incidents'
-import Arrests from './Arrests'
 import Offenders from './Offenders'
 import Proximity from './Proximity'
 import Login from './Login'
 import api, { getIncidents } from './client'
 import DataGrid from './DataGrid' // 1. IMPORT DATAGRID
+import MapWithData from './MapWithData' // 1. IMPORT MapWithData
 
 function AppContent() {
   const [tables, setTables] = useState([])
@@ -15,9 +16,8 @@ function AppContent() {
   const [schema, setSchema] = useState(null)
   const [data, setData] = useState([])
   const [mapPoints, setMapPoints] = useState([])
-  // Fetch limits for dedicated tabs
-  const [cadLimit, setCadLimit] = useState(50)
-  const [arrestLimit, setArrestLimit] = useState(50)
+  const [cadLimit, setCadLimit] = useState(100)
+  const [arrestLimit, setArrestLimit] = useState(100)
   // Display limits for "Recent" tab
   const [recentCadLimit, setRecentCadLimit] = useState(5)
   const [recentArrestLimit, setRecentArrestLimit] = useState(5)
@@ -35,86 +35,97 @@ function AppContent() {
   const [reoffendersResults, setReoffendersResults] = useState([])
   const mapRef = useRef(null)
   // Fetch limit for Crime tab, display limit for Recent tab
-  const [crimeLimit, setCrimeLimit] = useState(50)
+  const [crimeLimit, setCrimeLimit] = useState(100)
   const [recentCrimeLimit, setRecentCrimeLimit] = useState(5)
 
   const fetchData = useCallback(async () => {
     (async () => {
       setLoading(true)
       try{
-        let whereParts = []
-        if(dateFrom) whereParts.push(`starttime >= '${dateFrom}'`)
-        if(dateTo) whereParts.push(`starttime <= '${dateTo}'`)
-        if(filters) whereParts.push(`(${filters})`)
-        const combinedFilters = whereParts.join(' AND ')
+        // Use the /incidents endpoint as the single source of truth.
+        const incidentsRes = await getIncidents({ cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, filters });
+        const allIncidents = incidentsRes?.response?.data?.data || [];
 
-        // Create a specific filter for the crime query
-        let crimeFilterParts = [...whereParts]
-        crimeFilterParts.push("[key] = 'LW'")
-        const crimeFilters = crimeFilterParts.join(' AND ')
+        // --- DEBUGGING STEP 1: Log the raw data from the server ---
+        console.log('STEP 1: Raw data received from proxy:', allIncidents);
 
-        // query CAD and Arrests and Crime (Crime is derived from DailyBulletinArrests selecting key)
-        const arrColumns = ['charge','name','crime','location','event_time']
-        const crimeColumns = ['charge','name','crime','location','time']
-        const [cadRes, arrRes, crimeRes, reoffRes] = await Promise.all([
-          api.queryTable({table: 'cadHandler', limit: cadLimit, filters: combinedFilters, columns: ['starttime', 'nature', 'address', 'agency', 'service']}),
-          api.queryTable({table: 'DailyBulletinArrests', columns: arrColumns, limit: arrestLimit, filters: combinedFilters, orderBy: 'event_time DESC' }),
-          api.queryTable({table: 'DailyBulletinArrests', columns: crimeColumns, limit: crimeLimit, filters: crimeFilters, orderBy: 'event_time DESC' }),
-          api.getReoffenders()
-        ])
+        const processAndSetData = async (rows) => {
+          const batchSize = 10;
+          const geocodedPoints = [];
 
-  let cadRows = cadRes && cadRes.success && cadRes.response && cadRes.response.data && cadRes.response.data.data ? cadRes.response.data.data : []
-  let arrRows = arrRes && arrRes.success && arrRes.response && arrRes.response.data && arrRes.response.data.data ? arrRes.response.data.data : []
-  // annotate source so downstream slicing/filters detect them correctly
-  cadRows = cadRows.map(r => ({ ...r, _source: 'cadHandler' }))
-  arrRows = arrRows.map(r => ({ ...r, _source: 'DailyBulletinArrests' }))
-  const crimeRaw = crimeRes && crimeRes.success && crimeRes.response && crimeRes.response.data && crimeRes.response.data.data ? crimeRes.response.data.data : []
-  // normalize casing and keys
-  arrRows = arrRows.map(r => ({ ...r, event_time: r.event_time || r.event_time || r.event || r.eventTime || r.Event_Time || r['event_time'] }))
-  const crimeRows = crimeRaw.map(r => ({
-    ...r,
-    _source: 'Crime',
-    nature: r.nature || 'LW',
-    location: r.location || r.address || r.key || r.Key || '',
-    time: r.time || r.event_time || r.Event_Time || r.event || r['time'] || ''
-  }))
+          for (let i = 0; i < rows.length; i += batchSize) {
+            const batch = rows.slice(i, i + batchSize);
+            const promises = batch.map(async (row) => {
+              const address = row.location || row.address;
+              // If there's no address, we can't geocode it, but we must keep the record
+              // for the data grid display. Return the original row.
+              if (!address) {
+                return row;
+              }
+              try {
+                const res = await axios.get('http://192.168.0.212:8080/search', {
+                  params: { q: address.replace(/-BLK/gi, ' ').replace(/\//g, ' and ').trim(), format: 'json', limit: 1, addressdetails: 0 },
+                  headers: { 'User-Agent': 'p2c-frontend' }
+                });
+                if (res.data && res.data[0]) {
+                  const { lat, lon } = res.data[0];
+                  return { ...row, lat: Number(lat), lon: Number(lon) };
+                }
+              } catch (e) {
+                console.error(`Geocoding failed for "${address}":`, e.message);
+              }
+              // If geocoding fails, still return the original row to keep it in the list.
+              return row;
+            });
+            const batchResults = await Promise.all(promises);
+            geocodedPoints.push(...batchResults.filter(Boolean));
+          }
 
-        const combined = [...cadRows, ...arrRows, ...crimeRows]
-        setData(combined)
-        setResults(combined)
-        setCadResults(cadRows)
-        setArrestResults(arrRows)
-        setCrimeResults(crimeRows)
-  // set reoffenders
-  const reoffRows = reoffRes && reoffRes.success && reoffRes.response && reoffRes.response.data && reoffRes.response.data.data ? reoffRes.response.data.data : []
-  setReoffendersResults(reoffRows)
-      }catch(err){
-        console.error('Error fetching per-table data on startup', err)
+          // Now that we have all geocoded points, update all state variables
+          setMapPoints(geocodedPoints);
+
+          // Filter the geocoded data for each tab
+          const cadRows = geocodedPoints.filter(r => r._source === 'cadHandler');
+          const arrRows = geocodedPoints.filter(r => r._source === 'DailyBulletinArrests');
+          const crimeRows = geocodedPoints
+            .filter(r => r._source === 'Crime')
+            .sort((a, b) => new Date(b.event_time) - new Date(a.event_time));
+
+          setData(geocodedPoints);
+          setResults(geocodedPoints);
+          setCadResults(cadRows);
+          setArrestResults(arrRows);
+          setCrimeResults(crimeRows);
+
+          // --- DEBUGGING STEP 2: Log the final filtered data ---
+          console.log('STEP 2: Final filtered data', { cadRows, arrRows, crimeRows });
+
+          // Set loading to false only after all data is processed and set
+          setLoading(false);
+        };
+
+        // Fetch reoffenders separately as it's a custom query
+        const reoffRes = await api.getReoffenders();
+        const reoffRows = reoffRes?.response?.data?.data || [];
+        setReoffendersResults(reoffRows);
+
+        // Kick off geocoding and data processing.
+        await processAndSetData(allIncidents);
+      } catch(err) {
+        console.error('Error fetching data on startup', err);
+        setLoading(false); // Also ensure loading is false on error
       }
-      setLoading(false)
     })();
-  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, filters, distanceKm, centerLat, centerLng]);
+  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo]);
 
   useEffect(()=>{
     fetchData();
-  },[fetchData])
+  },[cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo])
 
   // When filters change, fetch geocoded points for the map.
   useEffect(() => {
-    // The /incidents endpoint fetches and geocodes data from all sources.
-    // We'll use this as the single source of truth for map points.
-    const fetchMapData = async () => {
-      const limit = recentCadLimit + recentArrestLimit + recentCrimeLimit;
-      let whereParts = []
-      if(dateFrom) whereParts.push(`starttime >= '${dateFrom}'`)
-      if(dateTo) whereParts.push(`starttime <= '${dateTo}'`)
-      if(filters) whereParts.push(`(${filters})`)
-      const combinedFilters = whereParts.join(' AND ')
-      const geoRes = await getIncidents({ limit, dateFrom, dateTo, filters: combinedFilters });
-      const geoRows = geoRes?.response?.data?.data ?? [];
-      setMapPoints(geoRows);
-    };
-    fetchMapData();
+    // This effect is no longer needed, as fetchData now handles map points.
+    // Kept here to show its removal. It can be deleted.
   }, [dateFrom, dateTo, filters, recentCadLimit, recentArrestLimit, recentCrimeLimit]);
 
   async function runQuery(){
@@ -153,19 +164,28 @@ function AppContent() {
 
   // 2. DEFINE COLUMNS FOR THE NEW GRIDS
   const crimeColumns = [
+    { key: 'event_time', name: 'event_time' },
     { key: 'charge', name: 'Charge' },
     { key: 'name', name: 'Name' },
-    { key: 'crime', name: 'Crime' },
     { key: 'location', name: 'Location' },
-    { key: 'time', name: 'Time' }
+    { key: 'agency', name: 'Agency' },
+    { key: 'event_number', name: 'Event #' }
   ]
 
   const arrestColumns = [
+    { key: 'event_time', name: 'event_time' },
     { key: 'charge', name: 'Charge' },
     { key: 'name', name: 'Name' },
-    { key: 'crime', name: 'Crime' },
     { key: 'location', name: 'Location' },
-    { key: 'event_time', name: 'Event Time' }
+    { key: 'agency', name: 'Agency' },
+    { key: 'event_number', name: 'Event #' }
+  ];
+
+  const reoffenderColumns = [
+    { key: 'event_time', name: 'Arrest Time' },
+    { key: 'ArrestRecordName', name: 'Arrest Name' },
+    { key: 'ArrestCharge', name: 'Arrest Charge' },
+    { key: 'OriginalOffenses', name: 'Original Offenses' },
   ];
 
   const incidentColumns = [
@@ -215,16 +235,16 @@ function AppContent() {
               />
             </Tab>
             <Tab label="Incidents">
-              {loading ? <div>Loading...</div> : <DataGrid data={cadResults.slice(0, 15)} columns={incidentColumns} />}
+              <MapWithData data={cadResults} columns={incidentColumns} loading={loading} />
             </Tab>
             <Tab label="Crime">
-              {loading ? <div>Loading...</div> : <DataGrid data={crimeResults.slice(0, 15)} columns={crimeColumns} />}
+              <MapWithData data={crimeResults} columns={crimeColumns} loading={loading} />
             </Tab>
             <Tab label="Arrests">
-              {loading ? <div>Loading...</div> : <DataGrid data={arrestResults.slice(0, 15)} columns={arrestColumns} />}
+              <MapWithData data={arrestResults} columns={arrestColumns} loading={loading} />
             </Tab>
             <Tab label="Reoffenders">
-              <Offenders />
+              {loading ? <div>Loading...</div> : <DataGrid data={reoffendersResults} columns={reoffenderColumns} />}
             </Tab>
             <Tab label="Proximity">
               <Proximity />

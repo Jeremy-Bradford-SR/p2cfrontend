@@ -83,7 +83,15 @@ const Incidents = ({
         <div className="results-grid three-columns" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="results-panel" style={{ flex: 1 }}>
             <h4>CAD (showing {cadResults.length})</h4>
-            <DataGrid data={cadResults} onRowClick={zoomToRow} />
+            <DataGrid
+              data={cadResults}
+              onRowClick={zoomToRow}
+              columns={[
+                { key: 'starttime', name: 'Start Time' },
+                { key: 'nature', name: 'Nature' },
+                { key: 'address', name: 'Address' },
+              ]}
+            />
           </div>
           <div className="results-panel" style={{ flex: 1 }}>
             <h4>DailyBulletinArrests (showing {arrestResults.length})</h4>
@@ -92,10 +100,8 @@ const Incidents = ({
               onRowClick={zoomToRow}
               columns={[
                 { key: 'charge', name: 'Charge' },
-                { key: 'name', name: 'Name' },
-                { key: 'crime', name: 'Crime' },
                 { key: 'location', name: 'Location' },
-                { key: 'event_time', name: 'Event Time' },
+                { key: 'event_time', name: 'event_time' },
               ]}
             />
           </div>
@@ -106,10 +112,8 @@ const Incidents = ({
               onRowClick={zoomToRow}
               columns={[
                 { key: 'charge', name: 'Charge' },
-                { key: 'name', name: 'Name' },
-                { key: 'crime', name: 'Crime' },
                 { key: 'location', name: 'Location' },
-                { key: 'time', name: 'Time' },
+                { key: 'event_time', name: 'event_time' },
               ]}
             />
           </div>

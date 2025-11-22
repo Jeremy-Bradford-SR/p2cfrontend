@@ -19,13 +19,29 @@ const DataGrid = ({ data, onRowClick, columns: customColumns }) => {
     if(!row) return ''
     const k = key || ''
     // common aliases for time
-    if(k === 'time' || k === 'event_time' || k === 'starttime'){
-      return row.time || row.event_time || row.starttime || row.event || ''
+    if (k === 'event_time') {
+      // Prioritize event_time if the key is specifically 'event_time'
+      return row.event_time || row.time || row.starttime || row.event || '';
+    }
+    if (k === 'time' || k === 'starttime') {
+      return row.time || row.starttime || row.event_time || row.event || '';
     }
     // prefer direct property
     if(Object.prototype.hasOwnProperty.call(row, k)) return row[k]
     // common fallbacks
-    if(k === 'location') return row.location || row.address || ''
+    if (k === 'location') {
+      let loc = row.location || row.address || '';
+      if (typeof loc === 'string') {
+        loc = loc.trim();
+        if (loc.toLowerCase().startsWith('at ')) {
+          loc = loc.substring(3).trim();
+        }
+        if (loc.endsWith(',')) {
+          loc = loc.slice(0, -1).trim();
+        }
+      }
+      return loc;
+    }
     if(k === 'summary') return row.nature || row.charge || row.description || row.crime || ''
     if(k === 'type'){
       if(row._source === 'Crime') return 'Crime'
