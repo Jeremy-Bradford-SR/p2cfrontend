@@ -13,52 +13,56 @@ L.Icon.Default.mergeOptions({
 })
 
 const createIcon = (color) => new L.Icon({
-    iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
+  iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
 });
 
 const icons = {
   cadHandler: createIcon('orange'),
   DailyBulletinArrests: createIcon('black'),
   Crime: createIcon('red'),
+  SexOffender: createIcon('violet'),
+  Reoffender: createIcon('gold'),
+  TrafficCitation: createIcon('blue'),
+  TrafficAccident: createIcon('green'),
   // Default icon
   unknown: createIcon('blue')
 }
 
-function FitBounds({points}){
+function FitBounds({ points }) {
   const map = useMap()
-  const valid = points.filter(p=>p && typeof p.lat === 'number' && typeof p.lng === 'number')
-  if(valid.length===0) return null
-  const bounds = L.latLngBounds(valid.map(p=>[p.lat, p.lng]))
-  map.fitBounds(bounds, {padding:[50,50]})
+  const valid = points.filter(p => p && typeof p.lat === 'number' && typeof p.lng === 'number')
+  if (valid.length === 0) return null
+  const bounds = L.latLngBounds(valid.map(p => [p.lat, p.lng]))
+  map.fitBounds(bounds, { padding: [50, 50] })
   return null
 }
 
-function haversineKm(lat1,lon1,lat2,lon2){
+function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371
-  const toRad = v=> v * Math.PI / 180
-  const dLat = toRad(lat2-lat1)
-  const dLon = toRad(lon2-lon1)
-  const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  const toRad = v => v * Math.PI / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return R * c
 }
 
 const DEFAULT_CENTER = [42.5006, -90.6646] // Dubuque, IA
-const MAX_BOUNDS = [[42.3, -91.0],[42.7, -90.3]]
+const MAX_BOUNDS = [[42.3, -91.0], [42.7, -90.3]]
 
-export default forwardRef(function MapView({points = [], center, distanceKm, zoomTo}, ref){
-  const markers = useMemo(()=>{
-    return (points || []).map(row=>{
+export default forwardRef(function MapView({ points = [], center, distanceKm, zoomTo }, ref) {
+  const markers = useMemo(() => {
+    return (points || []).map(row => {
       // prefer lat/lon, but fall back to geoy/geox
       let lat = row.lat ?? row.Lat ?? row.geoy ?? row.Geoy;
       let lon = row.lon ?? row.Lon ?? row.geox ?? row.Geox;
       const source = row._source || row.source || 'unknown';
-      
+
       if (lat != null && lon != null) {
         const latNum = Number(lat);
         const lonNum = Number(lon);
@@ -68,12 +72,12 @@ export default forwardRef(function MapView({points = [], center, distanceKm, zoo
       }
       return null
     }).filter(Boolean)
-  },[points])
+  }, [points])
 
-  const mapCenter = (center && center.length===2) ? center : DEFAULT_CENTER
+  const mapCenter = (center && center.length === 2) ? center : DEFAULT_CENTER
 
   return (
-    <MapContainer center={mapCenter} zoom={12} minZoom={11} maxZoom={18} maxBounds={MAX_BOUNDS} whenCreated={m=>{ if(ref) ref.current = m }} style={{height:'100%', width:'100%'}}>
+    <MapContainer center={mapCenter} zoom={12} minZoom={11} maxZoom={18} maxBounds={MAX_BOUNDS} whenCreated={m => { if (ref) ref.current = m }} style={{ height: '100%', width: '100%' }}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       {/* <FitBounds points={markers} /> */}
       <MarkerClusterGroup>
@@ -83,15 +87,24 @@ export default forwardRef(function MapView({points = [], center, distanceKm, zoo
             position={[m.lat, m.lng]}
             icon={icons[m.source] || icons.unknown}
             eventHandlers={{
-              click: ()=> { if(zoomTo) zoomTo([m.lat, m.lng]) },
-              mouseover: (e) => { try { e.target.openPopup() } catch(_){} },
-              mouseout: (e) => { try { e.target.closePopup() } catch(_){} }
+              click: () => { if (zoomTo) zoomTo([m.lat, m.lng]) },
+              mouseover: (e) => { try { e.target.openPopup() } catch (_) { } },
+              mouseout: (e) => { try { e.target.closePopup() } catch (_) { } }
             }}
           >
             <Popup>
-              <div style={{minWidth:200}}>
-                <div style={{fontWeight:600, marginBottom:6}}>{m.row?.nature || m.row?.event || m.source}</div>
-                <div style={{fontSize:13, color:'#333'}}>{m.row?.summary || m.row?.description || m.row?.charge || m.row?.location || ''}</div>
+              <div style={{ minWidth: 200, maxWidth: 300 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>{m.row?.nature || m.row?.event || m.source}</div>
+                {m.row?.photo_data ? (
+                  <img src={`data:image/jpeg;base64,${m.row.photo_data}`} alt="Offender" style={{ width: '100%', maxHeight: 200, objectFit: 'contain', marginBottom: 6, borderRadius: 4 }} />
+                ) : m.row?.photo_url ? (
+                  <img src={m.row.photo_url} alt="Offender" style={{ width: '100%', maxHeight: 200, objectFit: 'contain', marginBottom: 6, borderRadius: 4 }} />
+                ) : null}
+                <div style={{ fontSize: 13, color: '#333', maxHeight: 100, overflowY: 'auto' }}>
+                  {m.row?.summary || m.row?.description || m.row?.charge || m.row?.location || m.row?.address_line_1 || ''}
+                  {m.row?.first_name && <div><strong>Name:</strong> {m.row.first_name} {m.row.middle_name} {m.row.last_name}</div>}
+                  {m.row?.tier && <div><strong>Tier:</strong> {m.row.tier}</div>}
+                </div>
               </div>
             </Popup>
           </Marker>

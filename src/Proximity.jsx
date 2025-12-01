@@ -45,8 +45,7 @@ const Proximity = () => {
 
   return (
     <div>
-      <MapWithData data={results} columns={columns} loading={loading} />
-      <div style={{ padding: '1.5rem' }}>
+      <div style={{ padding: '1.5rem', paddingBottom: '0.5rem' }}>
         <h3>Proximity Search</h3>
         <p>Find incidents near an address.</p>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
@@ -91,6 +90,7 @@ const Proximity = () => {
         {error && <div style={{ color: 'red', marginBottom: '1rem' }}>{error}</div>}
         {loading && <div>Loading results...</div>}
       </div>
+      <MapWithData data={results} columns={columns} loading={loading} />
     </div>
   );
 };
