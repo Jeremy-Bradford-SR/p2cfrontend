@@ -1,9 +1,15 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import SplitView from './SplitView';
 import DataGrid from './DataGrid';
+import FilterControls, { filterData } from './FilterControls';
 
-const MapWithData = ({ data, columns, loading, mapHeight, setMapHeight }) => {
+const MapWithData = ({ data, columns, loading, mapHeight, setMapHeight, onRowClick }) => {
   const mapRef = useRef(null);
+  const [filters, setFilters] = useState({ searchText: '', startDate: '', endDate: '' });
+
+  const filteredData = useMemo(() => {
+    return filterData(data, filters);
+  }, [data, filters]);
 
   function zoomToRow(r) {
     let lat = r.lat || r.Lat || null;
@@ -20,14 +26,17 @@ const MapWithData = ({ data, columns, loading, mapHeight, setMapHeight }) => {
   }
 
   return (
-    <SplitView
-      mapPoints={data}
-      mapHeight={mapHeight}
-      setMapHeight={setMapHeight}
-      mapRef={mapRef}
-    >
-      {loading ? <div>Loading...</div> : <DataGrid data={data} columns={columns} onRowClick={zoomToRow} />}
-    </SplitView>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <FilterControls onFilterChange={setFilters} data={filteredData} />
+      <SplitView
+        mapPoints={filteredData}
+        mapHeight={mapHeight}
+        setMapHeight={setMapHeight}
+        mapRef={mapRef}
+      >
+        {loading ? <div>Loading...</div> : <DataGrid data={filteredData} columns={columns} onRowClick={(r) => { zoomToRow(r); if (onRowClick) onRowClick(r); }} />}
+      </SplitView>
+    </div>
   );
 };
 

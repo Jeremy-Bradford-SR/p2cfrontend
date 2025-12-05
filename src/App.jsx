@@ -1,14 +1,121 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { Tabs, Tab } from './Tabs'
-import Incidents from './Incidents'
+import CrimeTimeReplay from './CrimeTimeReplay'
+
+
 import Offenders from './Offenders'
 import Proximity from './Proximity'
 import DataScience from './DataScience'
-import Login from './Login'
-import api, { getIncidents, getSexOffenders, getCorrections, getDispatch, getTraffic } from './client'
+import api, { getIncidents, getSexOffenders, getCorrections, getDispatch, getTraffic, getJailInmates, getJailImage } from './client'
 import DataGrid from './DataGrid' // 1. IMPORT DATAGRID
 import MapWithData from './MapWithData' // 1. IMPORT MapWithData
+import FilterableDataGrid from './FilterableDataGrid'
+
+// Simple Modal Component for Jail Inmates
+const JailModal = ({ inmate, onClose }) => {
+  const [imageUrl, setImageUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function fetchImage() {
+      if (!inmate?.book_id) return;
+      try {
+        const res = await getJailImage(inmate.book_id);
+        if (mounted && res?.response?.data?.data?.[0]?.photo_data) {
+          // Assuming photo_data is base64 string or we need to handle it.
+          // If it's raw bytes from SQL, the API usually returns it as a base64 string in JSON.
+          // Let's assume base64.
+          setImageUrl(`data:image/jpeg;base64,${res.response.data.data[0].photo_data}`);
+        }
+      } catch (e) {
+        console.error("Failed to fetch jail image", e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    fetchImage();
+    return () => { mounted = false; };
+  }, [inmate]);
+
+  if (!inmate) return null;
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div style={{
+        backgroundColor: 'white', padding: '24px', borderRadius: '8px', maxWidth: '500px', width: '90%',
+        maxHeight: '90vh', overflowY: 'auto', position: 'relative'
+      }} onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} style={{ position: 'absolute', top: '10px', right: '10px', border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer' }}>×</button>
+
+        <h2 style={{ marginTop: 0 }}>{inmate.lastname}, {inmate.firstname}</h2>
+
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0', minHeight: '200px', alignItems: 'center', background: '#f0f0f0' }}>
+          {loading ? <span>Loading photo...</span> : (
+            imageUrl ?
+              <img src={imageUrl} alt={`${inmate.lastname}`} style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain' }} /> :
+              <span>No Photo Available</span>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '14px' }}>
+          <div><strong>Age:</strong> {inmate.age}</div>
+          <div><strong>Sex:</strong> {inmate.sex}</div>
+          <div><strong>Race:</strong> {inmate.race}</div>
+          <div><strong>Booked:</strong> {new Date(inmate.arrest_date).toLocaleDateString()}</div>
+          <div><strong>Bond:</strong> {inmate.total_bond_amount}</div>
+        </div>
+
+        <div style={{ marginTop: '20px' }}>
+          <strong>Charges:</strong>
+          <p style={{ background: '#f8f9fa', padding: '10px', borderRadius: '4px', marginTop: '5px' }}>
+            {inmate.charges || 'No charges listed'}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+// Simple Modal Component for Sex Offenders
+const SexOffenderModal = ({ offender, onClose }) => {
+  const imageUrl = offender.photo_data
+    ? `data:image/jpeg;base64,${offender.photo_data}`
+    : offender.photo_url;
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div style={{
+        backgroundColor: 'white', padding: '24px', borderRadius: '8px', maxWidth: '500px', width: '90%',
+        maxHeight: '90vh', overflowY: 'auto', position: 'relative'
+      }} onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} style={{ position: 'absolute', top: '10px', right: '10px', border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer' }}>×</button>
+
+        <h2 style={{ marginTop: 0 }}>{offender.last_name}, {offender.first_name} {offender.middle_name}</h2>
+
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0', minHeight: '200px', alignItems: 'center', background: '#f0f0f0' }}>
+          {imageUrl ?
+            <img src={imageUrl} alt={`${offender.last_name}`} style={{ maxWidth: '100%', maxHeight: '300px', objectFit: 'contain' }} /> :
+            <span>No Photo Available</span>
+          }
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '14px' }}>
+          <div><strong>Tier:</strong> {offender.tier}</div>
+          <div><strong>Address:</strong> {offender.address_line_1}</div>
+          <div><strong>City:</strong> {offender.city}</div>
+          <div><strong>Registrant ID:</strong> {offender.registrant_id}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function AppContent() {
   const [tables, setTables] = useState([])
@@ -38,6 +145,10 @@ function AppContent() {
   const [correctionsResults, setCorrectionsResults] = useState([])
   const [dispatchResults, setDispatchResults] = useState([])
   const [trafficResults, setTrafficResults] = useState([])
+  const [jailResults, setJailResults] = useState([]) // New State
+  const [databaseStats, setDatabaseStats] = useState({}) // New State
+  const [selectedInmate, setSelectedInmate] = useState(null) // New State
+  const [selectedSexOffender, setSelectedSexOffender] = useState(null) // New State
   const [mapHeight, setMapHeight] = useState(360) // Lifted state
   const mapRef = useRef(null)
   // Fetch limit for Crime tab, display limit for Recent tab
@@ -48,13 +159,15 @@ function AppContent() {
     setLoading(true)
     try {
       // 1. Fetch all data in parallel
-      const [incidentsRes, trafficRes, reoffRes, sexOffRes, corrRes, dispRes] = await Promise.all([
+      const [incidentsRes, trafficRes, reoffRes, sexOffRes, corrRes, dispRes, jailRes, dbStatsRes] = await Promise.all([
         getIncidents({ cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, filters }),
-        api.getTraffic(),
-        api.getReoffenders(),
-        api.getSexOffenders(),
-        api.getCorrections(),
-        api.getDispatch()
+        api.getTraffic({ limit: cadLimit, dateFrom, dateTo }),
+        api.getReoffenders({ limit: cadLimit, dateFrom, dateTo }),
+        api.getSexOffenders({ limit: cadLimit }),
+        api.getCorrections({ limit: cadLimit }),
+        api.getDispatch({ limit: cadLimit, dateFrom, dateTo }),
+        api.getJailInmates(), // Fetch Jail Data
+        api.getDatabaseStats() // Fetch DB Stats
       ]);
 
       let allIncidents = incidentsRes?.response?.data?.data || [];
@@ -107,59 +220,15 @@ function AppContent() {
 
       setCorrectionsResults(corrRes?.response?.data?.data || []);
       setDispatchResults(dispRes?.response?.data?.data || []);
+      setJailResults(jailRes?.response?.data?.data || []); // Set Jail Results
+      setDatabaseStats(dbStatsRes || {}); // Set DB Stats
 
       setLoading(false); // UI is now interactive
 
-      // 2. Background Geocoding
-      // We will process 'combinedForMap' in batches and update state incrementally
-      const geocodeBatch = async () => {
-        const batchSize = 5; // Small batch for responsiveness
-        let currentPoints = [...combinedForMap];
-        let hasChanges = false;
+      // 2. Background Geocoding REMOVED
+      // The frontend now relies on the backend (and backfill script) to provide lat/lon coordinates.
+      // No client-side geocoding is performed.
 
-        for (let i = 0; i < currentPoints.length; i++) {
-          const row = currentPoints[i];
-          // Skip if already has lat/lon or no address
-          if ((row.lat && row.lon) || (!row.location && !row.address)) continue;
-
-          const address = row.location || row.address;
-          try {
-            let q = address
-              .replace(/^at\s+/i, '') // Remove leading "at "
-              .replace(/-BLK/gi, ' ')
-              .replace(/\//g, ' and ')
-              .replace(/,(\s*,)+/g, ',') // Remove double commas
-              .trim();
-
-            if (!/dubuque/i.test(q)) q += ', Dubuque, IA';
-
-            const res = await axios.get('/api/geocode', {
-              params: { q },
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('p2c-token')}` }
-            });
-
-            if (res.data && res.data.lat) {
-              currentPoints[i] = { ...row, lat: Number(res.data.lat), lon: Number(res.data.lon) };
-              hasChanges = true;
-            }
-          } catch (e) {
-            // console.error(`Geocoding failed for "${address}"`);
-          }
-
-          // Update state every batchSize items or at the end
-          if ((i + 1) % batchSize === 0 || i === currentPoints.length - 1) {
-            if (hasChanges) {
-              updateDerivedStates([...currentPoints]); // Create new array ref
-              hasChanges = false;
-              // Small delay to yield to main thread
-              await new Promise(r => setTimeout(r, 50));
-            }
-          }
-        }
-      };
-
-      // Start background process
-      geocodeBatch();
 
     } catch (err) {
       console.error('Error fetching data', err);
@@ -279,51 +348,37 @@ function AppContent() {
     { key: 'key', name: 'Type' }
   ]
 
+  const jailColumns = [
+    { key: 'arrest_date', name: 'Booked Date' },
+    { key: 'lastname', name: 'Last Name' },
+    { key: 'firstname', name: 'First Name' },
+    { key: 'charges', name: 'Charges' },
+    { key: 'total_bond_amount', name: 'Bond' }
+  ]
+
   return (
     <div className="app-container">
       <header className="header">
-        <h1>Incidents Map — Dubuque, IA</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={() => {
-            localStorage.removeItem('p2c-token');
-            window.location.reload();
-          }}>
-            Logout
-          </button>
-        </div>
+        <h1>CrimeTime</h1>
       </header>
       <div className="content-container">
         <div className="main-content">
           {/* 3. UPDATE TABS */}
           <Tabs>
-            <Tab label="Recent">
-              <Incidents
-                mapRef={mapRef}
-                mapPoints={mapPoints}
-                centerLat={centerLat}
-                centerLng={centerLng}
-                distanceKm={distanceKm}
-                setCenterLat={setCenterLat}
-                setCenterLng={setCenterLng}
-                setDistanceKm={setDistanceKm}
-                results={results}
-                fitMarkers={fitMarkers}
-                centerDubuque={centerDubuque}
-                loading={loading}
-                cadResults={cadResults.slice(0, recentCadLimit)}
-                arrestResults={arrestResults.slice(0, recentArrestLimit)}
-                crimeResults={crimeResults.slice(0, recentCrimeLimit)}
-                zoomToRow={zoomToRow}
-                reoffendersResults={reoffendersResults}
-                mapHeight={mapHeight}
-                setMapHeight={setMapHeight}
+            <Tab label="Home">
+              <CrimeTimeReplay
+                cadResults={cadResults}
+                arrestResults={arrestResults}
+                crimeResults={crimeResults}
+                sexOffenderResults={sexOffenderResults}
+                trafficResults={trafficResults}
               />
             </Tab>
             <Tab label="Incidents">
               <MapWithData data={cadResults} columns={incidentColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
             </Tab>
             <Tab label="Dispatch">
-              <DataGrid data={dispatchResults} columns={dispatchColumns} />
+              <FilterableDataGrid data={dispatchResults} columns={dispatchColumns} loading={loading} />
             </Tab>
             <Tab label="Crime">
               <MapWithData data={crimeResults} columns={crimeColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
@@ -334,14 +389,20 @@ function AppContent() {
             <Tab label="Traffic">
               <MapWithData data={trafficResults} columns={trafficColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
             </Tab>
-            <Tab label="Corrections">
-              <DataGrid data={correctionsResults} columns={correctionsColumns} />
+            <Tab label="Probation/Parole">
+              <FilterableDataGrid data={correctionsResults} columns={correctionsColumns} loading={loading} />
             </Tab>
-            <Tab label="Offenders">
-              <DataGrid data={reoffendersResults} columns={reoffenderColumns} />
+            <Tab label="Violators">
+              <FilterableDataGrid data={reoffendersResults} columns={reoffenderColumns} loading={loading} />
             </Tab>
             <Tab label="Sex Offenders">
-              <MapWithData data={sexOffenderResults} columns={sexOffenderColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
+              <MapWithData data={sexOffenderResults} columns={sexOffenderColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} onRowClick={setSelectedSexOffender} />
+            </Tab>
+            <Tab label="Jail">
+              <div style={{ padding: '10px', background: '#e0f2fe', marginBottom: '10px', borderRadius: '4px', fontSize: '14px' }}>
+                ℹ️ Click on any row to view inmate photo and details.
+              </div>
+              <FilterableDataGrid data={jailResults} columns={jailColumns} onRowClick={setSelectedInmate} loading={loading} />
             </Tab>
             <Tab label="Data Science">
               <DataScience
@@ -349,6 +410,44 @@ function AppContent() {
                 arrestResults={arrestResults}
                 crimeResults={crimeResults}
                 trafficResults={trafficResults}
+                sexOffenderResults={sexOffenderResults}
+                correctionsResults={correctionsResults}
+                jailResults={jailResults}
+                databaseStats={databaseStats}
+                onIntervalChange={async (interval) => {
+                  setLoading(true);
+                  const now = new Date();
+                  let from = new Date();
+
+                  switch (interval) {
+                    case '1wk': from.setDate(now.getDate() - 7); break;
+                    case '2wk': from.setDate(now.getDate() - 14); break;
+                    case '3wk': from.setDate(now.getDate() - 21); break;
+                    case '1mnth': from.setMonth(now.getMonth() - 1); break;
+                    case '3mnth': from.setMonth(now.getMonth() - 3); break;
+                    case '6mnth': from.setMonth(now.getMonth() - 6); break;
+                    case '9mnth': from.setMonth(now.getMonth() - 9); break;
+                    case '1yr': from.setFullYear(now.getFullYear() - 1); break;
+                    default: from.setDate(now.getDate() - 7); // default 1wk
+                  }
+
+                  const fromStr = from.toISOString().slice(0, 19).replace('T', ' ');
+                  const toStr = now.toISOString().slice(0, 19).replace('T', ' ');
+
+                  setDateFrom(fromStr);
+                  setDateTo(toStr);
+
+                  // Set high limits to get "full dataset" for the range
+                  setCadLimit(10000);
+                  setArrestLimit(10000);
+                  setCrimeLimit(10000);
+
+                  // fetchData will be triggered by the useEffect on [dateFrom, dateTo, limits]
+                  // However, setting state is async. 
+                  // The existing useEffect: useEffect(() => { fetchData(); }, [cadLimit, ...])
+                  // will catch these changes.
+                }}
+                loading={loading}
               />
             </Tab>
             <Tab label="Proximity">
@@ -357,20 +456,12 @@ function AppContent() {
           </Tabs>
         </div>
       </div>
+      {selectedInmate && <JailModal inmate={selectedInmate} onClose={() => setSelectedInmate(null)} />}
+      {selectedSexOffender && <SexOffenderModal offender={selectedSexOffender} onClose={() => setSelectedSexOffender(null)} />}
     </div>
   )
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('p2c-token'));
-
-  const handleLoginSuccess = () => {
-    setIsAuthenticated(true);
-  };
-
-  if (!isAuthenticated) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
-  }
-
   return <AppContent />;
 }

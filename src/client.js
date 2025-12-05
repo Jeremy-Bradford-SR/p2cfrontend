@@ -131,10 +131,15 @@ async function proximitySearch({ address, days, nature, distance }) {
   }
 }
 
-async function getReoffenders() {
+async function getReoffenders(opts = {}) {
+  const limit = opts.limit || 50;
+  let where = '';
+  if (opts.dateFrom) where += ` AND A.event_time >= '${opts.dateFrom.replace(/'/g, "''")}'`;
+  if (opts.dateTo) where += ` AND A.event_time <= '${opts.dateTo.replace(/'/g, "''")}'`;
+
   const sql = `
 SELECT
-    TOP 50
+    TOP ${limit}
     A.name AS ArrestRecordName,
     A.charge AS ArrestCharge,
     
@@ -168,6 +173,7 @@ FROM
     dbo.DailyBulletinArrests AS A
 INNER JOIN
     dbo.Offender_Summary AS S ON S.Name = CONCAT_WS(' ', A.firstname, A.middlename, A.lastname)
+WHERE 1=1 ${where}
 GROUP BY 
     A.name,
     A.charge,
@@ -180,10 +186,10 @@ ORDER BY
   return rawQuery(sql);
 }
 
-async function getSexOffenders() {
-  // Select top 100 for now to avoid overwhelming the map
+async function getSexOffenders(opts = {}) {
+  const limit = opts.limit || 100;
   const sql = `
-    SELECT TOP 100
+    SELECT TOP ${limit}
       registrant_id,
       first_name,
       middle_name,
@@ -194,16 +200,18 @@ async function getSexOffenders() {
       lon,
       photo_url,
       photo_data,
-      tier
+      tier,
+      last_changed
     FROM dbo.sexoffender_registrants
     WHERE lat IS NOT NULL AND lon IS NOT NULL
   `;
   return rawQuery(sql);
 }
 
-async function getCorrections() {
+async function getCorrections(opts = {}) {
+  const limit = opts.limit || 100;
   const sql = `
-    SELECT TOP 100
+    SELECT TOP ${limit}
       S.OffenderNumber,
       S.Name,
       S.Gender,
@@ -218,9 +226,14 @@ async function getCorrections() {
   return rawQuery(sql);
 }
 
-async function getDispatch() {
+async function getDispatch(opts = {}) {
+  const limit = opts.limit || 100;
+  let where = '';
+  if (opts.dateFrom) where += ` WHERE TimeReceived >= '${opts.dateFrom.replace(/'/g, "''")}'`;
+  if (opts.dateTo) where += ` ${where ? 'AND' : 'WHERE'} TimeReceived <= '${opts.dateTo.replace(/'/g, "''")}'`;
+
   const sql = `
-    SELECT TOP 100
+    SELECT TOP ${limit}
       IncidentNumber,
       AgencyCode,
       NatureCode,
@@ -229,18 +242,72 @@ async function getDispatch() {
       LocationLat,
       LocationLong
     FROM dbo.DispatchCalls
+    ${where}
     ORDER BY TimeReceived DESC
   `;
   return rawQuery(sql);
 }
 
-async function getTraffic() {
-  const sql = "SELECT TOP 100 [key], event_time, charge, name, location, id as event_number FROM dbo.DailyBulletinArrests WHERE [key] != 'AR' AND [key] != 'LW' ORDER BY event_time DESC";
+async function getTraffic(opts = {}) {
+  const limit = opts.limit || 100;
+  let where = "([key] != 'AR' AND [key] != 'LW')";
+  if (opts.dateFrom) where += ` AND event_time >= '${opts.dateFrom.replace(/'/g, "''")}'`;
+  if (opts.dateTo) where += ` AND event_time <= '${opts.dateTo.replace(/'/g, "''")}'`;
+
+  const sql = `SELECT TOP ${limit} [key], event_time, charge, name, location, id as event_number FROM dbo.DailyBulletinArrests WHERE ${where} ORDER BY event_time DESC`;
   return rawQuery(sql);
 }
 
+async function getJailInmates() {
+  const sql = `
+    SELECT 
+      i.book_id, 
+      i.firstname, 
+      i.lastname, 
+      i.arrest_date, 
+      i.released_date,
+      i.age, 
+      i.race, 
+      i.sex, 
+      i.total_bond_amount,
+      STUFF((SELECT ', ' + charge_description FROM jail_charges WHERE book_id = i.book_id ORDER BY charge_description FOR XML PATH('')), 1, 2, '') as charges
+    FROM jail_inmates i 
+    ORDER BY i.arrest_date DESC
+  `;
+  return rawQuery(sql);
+}
+
+async function getJailImage(bookId) {
+  const sql = `SELECT photo_data FROM jail_inmates WHERE book_id = '${bookId.replace(/'/g, "''")}'`;
+  return rawQuery(sql);
+}
+
+async function getDatabaseStats() {
+  // Queries for DB size and oldest records in main tables
+  const sizeSql = "SELECT SUM(size) * 8 / 1024 AS SizeMB FROM sys.master_files WHERE database_id = DB_ID()";
+  const oldestCadSql = "SELECT MIN(starttime) as val FROM cadHandler";
+  const oldestArrestSql = "SELECT MIN(event_time) as val FROM DailyBulletinArrests";
+
+  try {
+    const [sizeRes, cadRes, arrestRes] = await Promise.all([
+      rawQuery(sizeSql),
+      rawQuery(oldestCadSql),
+      rawQuery(oldestArrestSql)
+    ]);
+
+    return {
+      sizeMB: sizeRes.response?.data?.data?.[0]?.SizeMB || 0,
+      oldestCad: cadRes.response?.data?.data?.[0]?.val,
+      oldestArrest: arrestRes.response?.data?.data?.[0]?.val
+    };
+  } catch (e) {
+    console.error("Failed to get DB stats", e);
+    return { success: false, request: { method: 'GET', url: `${PROXY}/rawQuery` }, response: { error: e.message } };
+  }
+}
+
 // also export individually
-export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch }
+export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, getJailInmates, getJailImage, getDatabaseStats }
 
 // Run a raw SQL query string via the proxy /query endpoint. Caller must supply a full SELECT.
 async function rawQuery(sql) {
@@ -259,4 +326,4 @@ async function rawQuery(sql) {
 
 export { rawQuery };
 
-export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery };
+export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery, getJailInmates, getJailImage, getDatabaseStats };
