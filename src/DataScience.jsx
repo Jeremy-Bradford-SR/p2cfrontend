@@ -448,29 +448,232 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
     }, [trafficResults]);
 
     const probationAnalysis = useMemo(() => {
+        // Top Offenses (from Offender_Detail.Offense)
         const topOffenses = getTopN(correctionsResults, 'Offense', 10);
-        // Map points? Corrections usually don't have lat/lon unless we geocoded them.
-        // Assuming they might have 'Location' which is text.
-        // If we don't have lat/lon, map will be empty.
-        const mapPoints = correctionsResults.filter(r => r.lat && r.lon).map(r => ({ ...r, color: COLORS[6] }));
 
-        // Demographics
-        const raceDist = getTopN(correctionsResults, 'Race', 10); // Assuming Race field exists? 
-        // Actually correctionsResults has: Name, Age, Gender, Offense, Location. No Race?
-        // Let's check schema. client.js says: Name, Gender, Age, DateScraped, Location, Offense.
-        // So no Race. We'll skip Race or mock it? Or use Gender.
-        const sexDist = getTopN(correctionsResults, 'Gender', 5);
+        // Supervision Status Distribution (bar chart data)
+        const supervisionStatusDist = getTopN(correctionsResults, 'SupervisionStatus', 10);
 
-        // Avg Height/Weight? Not in schema.
-        // We'll return N/A for those.
+        // Offense Class Distribution (pie chart data)
+        const offenseClassDist = getTopN(correctionsResults, 'OffenseClass', 10);
 
-        return { topOffenses, mapPoints, raceDist: [], sexDist, avgHeight: null, avgWeight: null };
+        // Gender Distribution (pie chart data)
+        const genderDist = [];
+        const genderCounts = {};
+        correctionsResults.forEach(r => {
+            if (r.Gender) {
+                const g = r.Gender.toUpperCase() === 'M' ? 'Male' : r.Gender.toUpperCase() === 'F' ? 'Female' : r.Gender;
+                genderCounts[g] = (genderCounts[g] || 0) + 1;
+            }
+        });
+        Object.entries(genderCounts).forEach(([name, value]) => {
+            genderDist.push({ name, value });
+        });
+        genderDist.sort((a, b) => b.value - a.value);
+
+        // Age Distribution (histogram-style data)
+        const ageBuckets = {
+            '18-25': 0, '26-35': 0, '36-45': 0, '46-55': 0, '56-65': 0, '65+': 0
+        };
+        correctionsResults.forEach(r => {
+            const age = parseInt(r.Age);
+            if (!isNaN(age)) {
+                if (age >= 18 && age <= 25) ageBuckets['18-25']++;
+                else if (age >= 26 && age <= 35) ageBuckets['26-35']++;
+                else if (age >= 36 && age <= 45) ageBuckets['36-45']++;
+                else if (age >= 46 && age <= 55) ageBuckets['46-55']++;
+                else if (age >= 56 && age <= 65) ageBuckets['56-65']++;
+                else if (age > 65) ageBuckets['65+']++;
+            }
+        });
+        const ageDistribution = Object.entries(ageBuckets).map(([name, value]) => ({ name, value }));
+
+        // Calculate average age
+        const ages = correctionsResults.map(r => parseInt(r.Age)).filter(a => !isNaN(a));
+        const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 'N/A';
+
+        // County of Commitment Distribution (bar chart data)
+        const countyDist = getTopN(correctionsResults, 'CountyOfCommitment', 10);
+
+        // End Date Analysis - Find longest supervision periods
+        const now = new Date();
+        const endDateData = [];
+        correctionsResults.forEach(r => {
+            if (r.EndDate) {
+                const endDate = new Date(r.EndDate);
+                if (!isNaN(endDate.getTime())) {
+                    const daysRemaining = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+                    endDateData.push({
+                        name: r.Name || r.OffenderNumber,
+                        endDate: endDate,
+                        daysRemaining: daysRemaining,
+                        offense: r.Offense || 'N/A',
+                        offenderNumber: r.OffenderNumber
+                    });
+                }
+            }
+        });
+
+        // Sort by longest remaining time (future end dates)
+        const longestSupervision = endDateData
+            .filter(d => d.daysRemaining > 0)
+            .sort((a, b) => b.daysRemaining - a.daysRemaining)
+            .slice(0, 10);
+
+        // Supervision ending soon (within 90 days)
+        const endingSoon = endDateData
+            .filter(d => d.daysRemaining > 0 && d.daysRemaining <= 90)
+            .sort((a, b) => a.daysRemaining - b.daysRemaining)
+            .slice(0, 10);
+
+        // Commitment Date Trend (when were offenders committed - monthly)
+        const commitmentTrend = {};
+        correctionsResults.forEach(r => {
+            if (r.CommitmentDate) {
+                const d = new Date(r.CommitmentDate);
+                if (!isNaN(d.getTime())) {
+                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    commitmentTrend[key] = (commitmentTrend[key] || 0) + 1;
+                }
+            }
+        });
+        const commitmentTrendData = Object.entries(commitmentTrend)
+            .map(([date, count]) => ({
+                date,
+                count,
+                label: new Date(date + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .slice(-12); // Last 12 months
+
+        // Total unique offenders
+        const uniqueOffenders = new Set(correctionsResults.map(r => r.OffenderNumber)).size;
+
+        return {
+            topOffenses,
+            supervisionStatusDist,
+            offenseClassDist,
+            genderDist,
+            ageDistribution,
+            avgAge,
+            countyDist,
+            longestSupervision,
+            endingSoon,
+            commitmentTrendData,
+            uniqueOffenders
+        };
     }, [correctionsResults]);
 
     const sexOffenderAnalysis = useMemo(() => {
+        // Tier Distribution
         const tierDist = getTopN(sexOffenderResults, 'tier', 5);
-        const mapPoints = sexOffenderResults.filter(r => r.lat && r.lon).map(r => ({ ...r, color: '#be123c' }));
-        return { tierDist, mapPoints };
+
+        // Map points (filter those with valid lat/lon)
+        const mapPoints = sexOffenderResults
+            .filter(r => r.lat && r.lon)
+            .map(r => ({ ...r, color: '#be123c' }));
+
+        // Tier 3 (High Risk) count - check for various tier formats
+        const tier3Count = sexOffenderResults.filter(r => {
+            const tier = String(r.tier || '').toLowerCase().trim();
+            return tier === '3' || tier === 'tier 3' || tier === 'iii' || tier.includes('tier 3');
+        }).length;
+
+        // Gender Distribution
+        const genderDist = [];
+        const genderCounts = {};
+        sexOffenderResults.forEach(r => {
+            if (r.gender) {
+                const g = r.gender.toUpperCase() === 'M' ? 'Male' : r.gender.toUpperCase() === 'F' ? 'Female' : r.gender;
+                genderCounts[g] = (genderCounts[g] || 0) + 1;
+            }
+        });
+        Object.entries(genderCounts).forEach(([name, value]) => {
+            genderDist.push({ name, value });
+        });
+        genderDist.sort((a, b) => b.value - a.value);
+
+        // Victim Type Breakdown (stacked/grouped bar chart data)
+        let totalMinorVictims = 0;
+        let totalAdultVictims = 0;
+        let totalUnknownVictims = 0;
+        sexOffenderResults.forEach(r => {
+            totalMinorVictims += parseInt(r.victim_minors) || 0;
+            totalAdultVictims += parseInt(r.victim_adults) || 0;
+            totalUnknownVictims += parseInt(r.victim_unknown) || 0;
+        });
+        const victimBreakdown = [
+            { name: 'Minors', value: totalMinorVictims, fill: '#ef4444' },
+            { name: 'Adults', value: totalAdultVictims, fill: '#3b82f6' },
+            { name: 'Unknown', value: totalUnknownVictims, fill: '#9ca3af' }
+        ];
+
+        // Race Distribution
+        const raceDist = getTopN(sexOffenderResults, 'race', 10);
+
+        // Postal Code Distribution (top 10)
+        const postalCodeDist = getTopN(sexOffenderResults, 'postal_code', 10);
+
+        // Clustered Addresses (addresses with registrant_cluster > 1 OR multiple offenders at same address)
+        const addressCounts = {};
+        sexOffenderResults.forEach(r => {
+            if (r.address_line_1) {
+                const addr = r.address_line_1.trim().toUpperCase();
+                if (!addressCounts[addr]) {
+                    addressCounts[addr] = {
+                        count: 0,
+                        cluster: parseInt(r.registrant_cluster) || 0,
+                        city: r.city || '',
+                        postal: r.postal_code || ''
+                    };
+                }
+                addressCounts[addr].count++;
+                // Use the max cluster value seen
+                const clusterVal = parseInt(r.registrant_cluster) || 0;
+                if (clusterVal > addressCounts[addr].cluster) {
+                    addressCounts[addr].cluster = clusterVal;
+                }
+            }
+        });
+
+        // Show addresses where count > 1 OR cluster > 1
+        const clusteredAddresses = Object.entries(addressCounts)
+            .filter(([addr, data]) => data.count > 1 || data.cluster > 1)
+            .map(([address, data]) => ({
+                address,
+                count: data.count,
+                cluster: data.cluster,
+                city: data.city,
+                postal: data.postal
+            }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 15);
+
+        // County Distribution
+        const countyDist = getTopN(sexOffenderResults, 'county', 10);
+
+        // Calculate total offenders with valid data for stats
+        const totalRegistrants = sexOffenderResults.length;
+        const withVictimData = sexOffenderResults.filter(r =>
+            (parseInt(r.victim_minors) || 0) + (parseInt(r.victim_adults) || 0) + (parseInt(r.victim_unknown) || 0) > 0
+        ).length;
+
+        return {
+            tierDist,
+            mapPoints,
+            tier3Count,
+            genderDist,
+            victimBreakdown,
+            raceDist,
+            postalCodeDist,
+            clusteredAddresses,
+            countyDist,
+            totalRegistrants,
+            withVictimData,
+            totalMinorVictims,
+            totalAdultVictims,
+            totalUnknownVictims
+        };
     }, [sexOffenderResults]);
 
     const jailAnalysis = useMemo(() => {
@@ -853,51 +1056,190 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
         if (!probationAnalysis) return null;
         return (
             <div style={{ animation: 'fadeIn 0.4s ease-in' }}>
+                {/* Summary Cards */}
                 <div style={{ display: 'flex', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
-                    <Card title="Active Cases" value={correctionsResults.length.toLocaleString()} icon="📋" />
-                    <Card title="Avg Height" value={probationAnalysis.avgHeight ? `${Math.floor(probationAnalysis.avgHeight / 12)}' ${probationAnalysis.avgHeight % 12}"` : 'N/A'} icon="📏" />
-                    <Card title="Avg Weight" value={probationAnalysis.avgWeight ? `${probationAnalysis.avgWeight} lbs` : 'N/A'} icon="⚖️" />
+                    <Card title="Unique Offenders" value={probationAnalysis.uniqueOffenders?.toLocaleString() || 0} icon="👤" />
+                    <Card title="Total Records" value={correctionsResults.length.toLocaleString()} subtext="Charges & Cases" icon="📋" />
+                    <Card title="Average Age" value={probationAnalysis.avgAge} subtext="Years Old" icon="🎂" />
+                    <Card title="Cases Ending Soon" value={probationAnalysis.endingSoon?.length || 0} subtext="Within 90 Days" icon="⏰" />
                 </div>
 
+                {/* Row 1: Supervision Status (Bar) + Offense Class (Pie) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
-                    <ChartCard title="Top Offenses">
+                    <ChartCard title="Supervision Status Distribution">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart layout="vertical" data={probationAnalysis.topOffenses} margin={{ left: 20 }}>
+                            <BarChart layout="vertical" data={probationAnalysis.supervisionStatusDist} margin={{ left: 60 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
-                                <XAxis type="number" hide />
-                                <YAxis dataKey="name" type="category" width={200} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={140} tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
                                 <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="value" fill={COLORS[6]} radius={[0, 4, 4, 0]} barSize={25} />
+                                <Bar dataKey="value" fill={COLORS[0]} radius={[0, 4, 4, 0]} barSize={22}>
+                                    {probationAnalysis.supervisionStatusDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartCard>
 
-                    <ChartCard title="Probationer Locations">
-                        <DataMap points={probationAnalysis.mapPoints} color={COLORS[6]} />
-                    </ChartCard>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                    <ChartCard title="Demographics (Race)">
+                    <ChartCard title="Offense Class Distribution">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
-                                <Pie data={probationAnalysis.raceDist} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                    {probationAnalysis.raceDist.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                <Pie
+                                    data={probationAnalysis.offenseClassDist}
+                                    innerRadius={60}
+                                    outerRadius={100}
+                                    paddingAngle={3}
+                                    dataKey="value"
+                                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                                    labelLine={false}
+                                >
+                                    {probationAnalysis.offenseClassDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
                                 </Pie>
                                 <Tooltip content={<CustomTooltip />} />
                                 <Legend verticalAlign="bottom" />
                             </PieChart>
                         </ResponsiveContainer>
                     </ChartCard>
-                    <ChartCard title="Demographics (Sex)">
+                </div>
+
+                {/* Row 2: Age Distribution + Gender Distribution */}
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <ChartCard title="Age Distribution">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={probationAnalysis.ageDistribution}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="name" tick={{ fontSize: 12, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="value" fill={COLORS[1]} radius={[4, 4, 0, 0]} barSize={50}>
+                                    {probationAnalysis.ageDistribution.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[1]} fillOpacity={0.6 + (index * 0.08)} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+
+                    <ChartCard title="Gender Distribution">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
-                                <Pie data={probationAnalysis.sexDist} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                    {probationAnalysis.sexDist.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />)}
+                                <Pie
+                                    data={probationAnalysis.genderDist}
+                                    innerRadius={50}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {probationAnalysis.genderDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={index === 0 ? '#3b82f6' : '#ec4899'} />
+                                    ))}
                                 </Pie>
                                 <Tooltip content={<CustomTooltip />} />
                                 <Legend verticalAlign="bottom" />
                             </PieChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+                </div>
+
+                {/* Row 3: Longest Supervision + Ending Soon */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <ChartCard title="Longest Supervision Remaining" height={280}>
+                        <div style={{ overflowY: 'auto', height: '100%' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left' }}>
+                                        <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>Offender</th>
+                                        <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>End Date</th>
+                                        <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase', textAlign: 'right' }}>Days Left</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {probationAnalysis.longestSupervision.map((r, i) => (
+                                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '8px', fontSize: '12px', color: TEXT_MAIN, fontWeight: 500 }}>{r.offenderNumber}</td>
+                                            <td style={{ padding: '8px', fontSize: '12px', color: TEXT_SUB }}>{r.endDate.toLocaleDateString()}</td>
+                                            <td style={{ padding: '8px', fontSize: '12px', color: COLORS[0], textAlign: 'right', fontWeight: 700 }}>{r.daysRemaining.toLocaleString()}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </ChartCard>
+
+                    <ChartCard title="Supervision Ending Soon (90 Days)" height={280}>
+                        <div style={{ overflowY: 'auto', height: '100%' }}>
+                            {probationAnalysis.endingSoon.length > 0 ? (
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left' }}>
+                                            <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>Offender</th>
+                                            <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>End Date</th>
+                                            <th style={{ padding: '10px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase', textAlign: 'right' }}>Days Left</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {probationAnalysis.endingSoon.map((r, i) => (
+                                            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                <td style={{ padding: '8px', fontSize: '12px', color: TEXT_MAIN, fontWeight: 500 }}>{r.offenderNumber}</td>
+                                                <td style={{ padding: '8px', fontSize: '12px', color: TEXT_SUB }}>{r.endDate.toLocaleDateString()}</td>
+                                                <td style={{ padding: '8px', fontSize: '12px', color: r.daysRemaining <= 30 ? '#ef4444' : '#f59e0b', textAlign: 'right', fontWeight: 700 }}>{r.daysRemaining}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: TEXT_SUB }}>
+                                    No cases ending within 90 days
+                                </div>
+                            )}
+                        </div>
+                    </ChartCard>
+                </div>
+
+                {/* Row 4: County Distribution + Commitment Trend + Top Offenses */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '24px' }}>
+                    <ChartCard title="County of Commitment">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart layout="vertical" data={probationAnalysis.countyDist} margin={{ left: 20 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                                <XAxis type="number" hide />
+                                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="value" fill={COLORS[5]} radius={[0, 4, 4, 0]} barSize={18} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+
+                    <ChartCard title="Commitment Timeline">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={probationAnalysis.commitmentTrendData}>
+                                <defs>
+                                    <linearGradient id="colorCommitment" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={COLORS[6]} stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor={COLORS[6]} stopOpacity={0.1} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Area type="monotone" dataKey="count" stroke={COLORS[6]} fill="url(#colorCommitment)" strokeWidth={2} />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+
+                    <ChartCard title="Top Offenses">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart layout="vertical" data={probationAnalysis.topOffenses.slice(0, 7)} margin={{ left: 10 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                                <XAxis type="number" hide />
+                                <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="value" fill={COLORS[3]} radius={[0, 4, 4, 0]} barSize={16} />
+                            </BarChart>
                         </ResponsiveContainer>
                     </ChartCard>
                 </div>
@@ -909,11 +1251,13 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
         if (!sexOffenderAnalysis) return null;
         return (
             <div style={{ animation: 'fadeIn 0.4s ease-in' }}>
+                {/* Summary Cards */}
                 <div style={{ display: 'flex', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
-                    <Card title="Registered Offenders" value={sexOffenderResults.length.toLocaleString()} icon="⚠️" />
-                    <Card title="Tier 3 (High Risk)" value={sexOffenderResults.filter(r => r.tier === '3').length} icon="🔴" />
+                    <Card title="Registered Offenders" value={sexOffenderAnalysis.totalRegistrants.toLocaleString()} icon="⚠️" />
+                    <Card title="Tier 3 (High Risk)" value={sexOffenderAnalysis.tier3Count} icon="🔴" />
                 </div>
 
+                {/* Row 1: Map + Tier Distribution */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Offender Residency Map">
                         <DataMap points={sexOffenderAnalysis.mapPoints} color="#be123c" />
@@ -922,8 +1266,24 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                     <ChartCard title="Risk Tier Distribution">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
-                                <Pie data={sexOffenderAnalysis.tierDist} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                    {sexOffenderAnalysis.tierDist.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                <Pie
+                                    data={sexOffenderAnalysis.tierDist}
+                                    innerRadius={60}
+                                    outerRadius={100}
+                                    paddingAngle={3}
+                                    dataKey="value"
+                                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                                    labelLine={false}
+                                >
+                                    {sexOffenderAnalysis.tierDist.map((entry, index) => {
+                                        // Color tiers by risk level
+                                        const tierColors = {
+                                            '3': '#ef4444', 'Tier 3': '#ef4444', 'III': '#ef4444',
+                                            '2': '#f59e0b', 'Tier 2': '#f59e0b', 'II': '#f59e0b',
+                                            '1': '#22c55e', 'Tier 1': '#22c55e', 'I': '#22c55e'
+                                        };
+                                        return <Cell key={`cell-${index}`} fill={tierColors[entry.name] || COLORS[index % COLORS.length]} />;
+                                    })}
                                 </Pie>
                                 <Tooltip content={<CustomTooltip />} />
                                 <Legend verticalAlign="bottom" />
@@ -931,6 +1291,118 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                         </ResponsiveContainer>
                     </ChartCard>
                 </div>
+
+                {/* Row 2: Victim Breakdown + Gender Distribution */}
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <ChartCard title="Victim Demographics">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={sexOffenderAnalysis.victimBreakdown} layout="horizontal">
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 600 }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="value" radius={[8, 8, 0, 0]} barSize={80}>
+                                    {sexOffenderAnalysis.victimBreakdown.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+
+                    <ChartCard title="Gender Distribution">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={sexOffenderAnalysis.genderDist}
+                                    innerRadius={50}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {sexOffenderAnalysis.genderDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={entry.name === 'Male' ? '#0891b2' : '#f59e0b'} />
+                                    ))}
+                                </Pie>
+                                <Tooltip content={<CustomTooltip />} />
+                                <Legend verticalAlign="bottom" />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+                </div>
+
+                {/* Row 3: Race Distribution + Postal Code Distribution */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <ChartCard title="Race Distribution">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={sexOffenderAnalysis.raceDist}
+                                    innerRadius={50}
+                                    outerRadius={90}
+                                    paddingAngle={3}
+                                    dataKey="value"
+                                >
+                                    {sexOffenderAnalysis.raceDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip content={<CustomTooltip />} />
+                                <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: '12px' }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+
+                    <ChartCard title="Distribution by Postal Code">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart layout="vertical" data={sexOffenderAnalysis.postalCodeDist} margin={{ left: 20 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                                <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="value" fill="#be123c" radius={[0, 4, 4, 0]} barSize={22}>
+                                    {sexOffenderAnalysis.postalCodeDist.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </ChartCard>
+                </div>
+
+                {/* Row 4: Clustered Addresses */}
+                <ChartCard title="Clustered Addresses (Multiple Offenders at Same Location)" height={320}>
+                    <div style={{ overflowY: 'auto', height: '100%' }}>
+                        {sexOffenderAnalysis.clusteredAddresses.length > 0 ? (
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left', position: 'sticky', top: 0, background: CARD_BG }}>
+                                        <th style={{ padding: '12px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>Address</th>
+                                        <th style={{ padding: '12px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>City</th>
+                                        <th style={{ padding: '12px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase' }}>ZIP</th>
+                                        <th style={{ padding: '12px', color: TEXT_SUB, fontSize: '11px', textTransform: 'uppercase', textAlign: 'center' }}>Count</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sexOffenderAnalysis.clusteredAddresses.map((r, i) => (
+                                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '10px', fontSize: '12px', color: TEXT_MAIN, fontWeight: 500 }}>{r.address}</td>
+                                            <td style={{ padding: '10px', fontSize: '12px', color: TEXT_SUB }}>{r.city}</td>
+                                            <td style={{ padding: '10px', fontSize: '12px', color: TEXT_SUB }}>{r.postal}</td>
+                                            <td style={{ padding: '10px', fontSize: '14px', color: r.count > 2 ? '#ef4444' : '#f59e0b', textAlign: 'center', fontWeight: 700 }}>
+                                                {r.count}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: TEXT_SUB }}>
+                                No clustered addresses found
+                            </div>
+                        )}
+                    </div>
+                </ChartCard>
             </div>
         );
     };
@@ -1040,6 +1512,15 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
             {activeTab === 'Probation' && renderProbation()}
             {activeTab === 'SexOffenders' && renderSexOffenders()}
             {activeTab === 'Jail' && renderJail()}
+
+            {/* Offender Detail Modal */}
+            {(selectedOffender || modalLoading) && (
+                <OffenderDetailModal
+                    offender={selectedOffender}
+                    onClose={closeOffenderModal}
+                    loading={modalLoading}
+                />
+            )}
         </div>
     );
 };

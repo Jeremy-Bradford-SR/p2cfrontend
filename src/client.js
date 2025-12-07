@@ -187,40 +187,55 @@ ORDER BY
 }
 
 async function getSexOffenders(opts = {}) {
-  const limit = opts.limit || 100;
+  const limit = opts.limit || 500;
   const sql = `
-    SELECT TOP ${limit}
+    SELECT 
       registrant_id,
       first_name,
       middle_name,
       last_name,
       address_line_1,
       city,
+      state,
+      postal_code,
+      county,
       lat,
       lon,
       photo_url,
       photo_data,
       tier,
+      gender,
+      race,
+      victim_minors,
+      victim_adults,
+      victim_unknown,
+      registrant_cluster,
       last_changed
     FROM dbo.sexoffender_registrants
-    WHERE lat IS NOT NULL AND lon IS NOT NULL
   `;
   return rawQuery(sql);
 }
 
 async function getCorrections(opts = {}) {
-  const limit = opts.limit || 100;
+  const limit = opts.limit || 500;
   const sql = `
-    SELECT TOP ${limit}
+    SELECT 
       S.OffenderNumber,
       S.Name,
       S.Gender,
       S.Age,
       S.DateScraped,
       D.Location,
-      D.Offense
+      D.Offense,
+      D.CommitmentDate,
+      D.TDD_SDD,
+      C.SupervisionStatus,
+      C.OffenseClass,
+      C.CountyOfCommitment,
+      C.EndDate
     FROM dbo.Offender_Summary AS S
     LEFT JOIN dbo.Offender_Detail AS D ON S.OffenderNumber = D.OffenderNumber
+    LEFT JOIN dbo.Offender_Charges AS C ON S.OffenderNumber = C.OffenderNumber
     ORDER BY S.DateScraped DESC
   `;
   return rawQuery(sql);
@@ -282,6 +297,107 @@ async function getJailImage(bookId) {
   return rawQuery(sql);
 }
 
+// Search jail records by name (for matching violators to jail inmates)
+async function getJailByName(firstName, lastName) {
+  if (!firstName && !lastName) return { success: false, response: { error: 'Name is required' } };
+
+  const conditions = [];
+  if (firstName) conditions.push(`firstname LIKE '%${firstName.replace(/'/g, "''").trim()}%'`);
+  if (lastName) conditions.push(`lastname LIKE '%${lastName.replace(/'/g, "''").trim()}%'`);
+
+  const sql = `
+    SELECT 
+      i.book_id, 
+      i.firstname, 
+      i.lastname, 
+      i.arrest_date, 
+      i.released_date,
+      i.age, 
+      i.race, 
+      i.sex, 
+      i.total_bond_amount,
+      STUFF((SELECT ', ' + charge_description FROM jail_charges WHERE book_id = i.book_id ORDER BY charge_description FOR XML PATH('')), 1, 2, '') as charges
+    FROM jail_inmates i 
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY i.arrest_date DESC
+  `;
+  return rawQuery(sql);
+}
+
+// Search arrests by name from DailyBulletinArrests
+async function getArrestsByName(firstName, lastName) {
+  if (!firstName && !lastName) return { success: false, response: { error: 'Name is required' } };
+
+  const conditions = [];
+  if (firstName) conditions.push(`firstname LIKE '%${firstName.replace(/'/g, "''").trim()}%'`);
+  if (lastName) conditions.push(`lastname LIKE '%${lastName.replace(/'/g, "''").trim()}%'`);
+
+  const sql = `
+    SELECT TOP 20
+      id, event_time, charge, name, firstname, lastname, location, [key]
+    FROM dbo.DailyBulletinArrests
+    WHERE ${conditions.join(' AND ')} AND [key] = 'AR'
+    ORDER BY event_time DESC
+  `;
+  return rawQuery(sql);
+}
+
+// Search traffic records by name (TrafficCitations and TrafficAccidents)
+async function getTrafficByName(firstName, lastName) {
+  if (!firstName && !lastName) return { success: false, response: { error: 'Name required' } };
+
+  const conditions = [];
+  if (firstName) conditions.push(`firstname LIKE '%${firstName.replace(/'/g, "''").trim()}%'`);
+  if (lastName) conditions.push(`lastname LIKE '%${lastName.replace(/'/g, "''").trim()}%'`);
+
+  const sql = `
+    SELECT TOP 20
+      id, event_time, charge, name, firstname, lastname, location, [key]
+    FROM dbo.DailyBulletinArrests
+    WHERE ${conditions.join(' AND ')} AND ([key] = 'TC' OR [key] = 'TA')
+    ORDER BY event_time DESC
+  `;
+  return rawQuery(sql);
+}
+
+// Search crime reports by name
+async function getCrimeByName(firstName, lastName) {
+  if (!firstName && !lastName) return { success: false, response: { error: 'Name required' } };
+
+  const conditions = [];
+  if (firstName) conditions.push(`firstname LIKE '%${firstName.replace(/'/g, "''").trim()}%'`);
+  if (lastName) conditions.push(`lastname LIKE '%${lastName.replace(/'/g, "''").trim()}%'`);
+
+  const sql = `
+    SELECT TOP 20
+      id, event_time, charge, name, firstname, lastname, location, [key]
+    FROM dbo.DailyBulletinArrests
+    WHERE ${conditions.join(' AND ')} AND [key] = 'LW'
+    ORDER BY event_time DESC
+  `;
+  return rawQuery(sql);
+}
+
+// Comprehensive 360 search - searches ALL records by name (no limit)
+async function search360(searchName) {
+  if (!searchName || searchName.trim().length < 2) {
+    return { success: false, response: { error: 'Search term must be at least 2 characters' } };
+  }
+
+  try {
+    const params = new URLSearchParams({ q: searchName });
+    const url = `${PROXY}/search360?${params.toString()}`;
+    const r = await api.get(url);
+    // The proxy returns { data: [...] }, and 'response.data' needs to be the axios response object structure expected by caller
+    // The caller expects { response: { data: { data: [...] } } } roughly if following previous pattern?
+    // Looking at other functions: return { success: true, response: { status: r.status, data: r.data } }
+    // r.data from proxy is { data: [...] }
+    return { success: true, request: { method: 'GET', url }, response: { status: r.status, data: r.data } };
+  } catch (e) {
+    return { success: false, request: { method: 'GET', url: `${PROXY}/search360` }, response: { error: e.message } };
+  }
+}
+
 async function getDatabaseStats() {
   // Queries for DB size and oldest records in main tables
   const sizeSql = "SELECT SUM(size) * 8 / 1024 AS SizeMB FROM sys.master_files WHERE database_id = DB_ID()";
@@ -306,8 +422,60 @@ async function getDatabaseStats() {
   }
 }
 
+// Fetch complete offender record by OffenderNumber
+async function getOffenderDetail(offenderNumber) {
+  if (!offenderNumber) return { success: false, response: { error: 'OffenderNumber is required' } };
+
+  const sanitized = String(offenderNumber).replace(/'/g, "''");
+
+  // Get summary info
+  const summarySql = `
+    SELECT 
+      OffenderNumber, Name, Gender, Age, DateScraped
+    FROM dbo.Offender_Summary
+    WHERE OffenderNumber = '${sanitized}'
+  `;
+
+  // Get detail info
+  const detailSql = `
+    SELECT 
+      OffenderNumber, Location, Offense, TDD_SDD, CommitmentDate, RecallDate,
+      InterviewDate, MandatoryMinimum, DecisionType, Decision, DecisionDate, EffectiveDate
+    FROM dbo.Offender_Detail
+    WHERE OffenderNumber = '${sanitized}'
+  `;
+
+  // Get all charges
+  const chargesSql = `
+    SELECT 
+      ChargeID, OffenderNumber, SupervisionStatus, OffenseClass, CountyOfCommitment, EndDate
+    FROM dbo.Offender_Charges
+    WHERE OffenderNumber = '${sanitized}'
+    ORDER BY EndDate DESC
+  `;
+
+  try {
+    const [summaryRes, detailRes, chargesRes] = await Promise.all([
+      rawQuery(summarySql),
+      rawQuery(detailSql),
+      rawQuery(chargesSql)
+    ]);
+
+    return {
+      success: true,
+      response: {
+        summary: summaryRes.response?.data?.data?.[0] || null,
+        detail: detailRes.response?.data?.data?.[0] || null,
+        charges: chargesRes.response?.data?.data || []
+      }
+    };
+  } catch (e) {
+    return { success: false, response: { error: e.message } };
+  }
+}
+
 // also export individually
-export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, getJailInmates, getJailImage, getDatabaseStats }
+export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 }
 
 // Run a raw SQL query string via the proxy /query endpoint. Caller must supply a full SELECT.
 async function rawQuery(sql) {
@@ -326,4 +494,4 @@ async function rawQuery(sql) {
 
 export { rawQuery };
 
-export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery, getJailInmates, getJailImage, getDatabaseStats };
+export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 };
