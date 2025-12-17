@@ -4,19 +4,31 @@ import { Tabs, Tab } from './Tabs'
 import CrimeTimeReplay from './CrimeTimeReplay'
 
 
-import Offenders from './Offenders'
-import Proximity from './Proximity'
+
 import DataScience from './DataScience'
-import api, { getIncidents, getSexOffenders, getCorrections, getDispatch, getTraffic, getJailInmates, getJailImage, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 } from './client'
+import api, { getIncidents, getSexOffenders, getCorrections, getDispatch, getTraffic, getJailInmates, getJailImage, getOffenderDetail, getOffenderDetailByName, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 } from './client'
 import DataGrid from './DataGrid' // 1. IMPORT DATAGRID
 import MapWithData from './MapWithData' // 1. IMPORT MapWithData
 import SplitView from './SplitView'
 import FilterableDataGrid from './FilterableDataGrid'
+import Tab720 from './P2CTab'
+
+import RecordsTab from './RecordsTab'
+import MobileApp from './MobileApp' // Import Mobile App
+import useIsMobile from './hooks/useIsMobile' // Import Detection Hook
 
 // Simple Modal Component for Jail Inmates
 const JailModal = ({ inmate, onClose }) => {
   const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   useEffect(() => {
     let mounted = true;
@@ -83,6 +95,14 @@ const JailModal = ({ inmate, onClose }) => {
 };
 // Simple Modal Component for Sex Offenders
 const SexOffenderModal = ({ offender, onClose }) => {
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   const imageUrl = offender.photo_data
     ? `data:image/jpeg;base64,${offender.photo_data}`
     : offender.photo_url;
@@ -122,6 +142,14 @@ const SexOffenderModal = ({ offender, onClose }) => {
 const OffenderModal = ({ offenderNumber, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [offender, setOffender] = useState(null);
+
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   useEffect(() => {
     let mounted = true;
@@ -352,6 +380,14 @@ const ViolatorModal = ({ violator, onClose }) => {
 
     return () => { mounted = false; };
   }, [violator]);
+
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   if (!violator) return null;
 
@@ -653,6 +689,7 @@ const View360Modal = ({ record, onClose }) => {
       );
 
       // DOC (if OffenderNumbers available)
+      // DOC (if OffenderNumbers available OR search by Name)
       if (record.OffenderNumbers) {
         const offNum = String(record.OffenderNumbers).split(',')[0].trim();
         promises.push(
@@ -661,7 +698,12 @@ const View360Modal = ({ record, onClose }) => {
             .finally(() => { if (mounted) setDataLoading(p => ({ ...p, doc: false })); })
         );
       } else {
-        setDataLoading(p => ({ ...p, doc: false }));
+        // Fallback: Search by Name
+        promises.push(
+          getOffenderDetailByName(firstName, lastName)
+            .then(res => { if (mounted && res.success) setOffenderData(res.response); })
+            .finally(() => { if (mounted) setDataLoading(p => ({ ...p, doc: false })); })
+        );
       }
 
       await Promise.all(promises);
@@ -671,6 +713,18 @@ const View360Modal = ({ record, onClose }) => {
     fetchAll();
     return () => { mounted = false; };
   }, [record]);
+
+  useEffect(() => {
+    const handleEsc = (e) => {
+      console.log('[View360Modal] keydown:', e.key);
+      if (e.key === 'Escape') {
+        console.log('[View360Modal] Closing via Escape');
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   if (!record) return null;
 
@@ -823,10 +877,14 @@ const View360Content = ({ mapHeight, setMapHeight, onRowClick }) => {
 
   // Type styles for each record type
   const typeStyles = {
-    'AR': { bg: '#fef2f2', border: '#dc2626', badge: '#dc2626', text: '#991b1b', label: '🚔 Arrest' },
-    'LW': { bg: '#f5f3ff', border: '#7c3aed', badge: '#7c3aed', text: '#5b21b6', label: '📋 Crime' },
-    'TC': { bg: '#fffbeb', border: '#f59e0b', badge: '#f59e0b', text: '#b45309', label: '🚗 Citation' },
-    'TA': { bg: '#fff7ed', border: '#ea580c', badge: '#ea580c', text: '#c2410c', label: '💥 Accident' }
+    'ARREST': { bg: '#fef2f2', border: '#dc2626', badge: '#dc2626', text: '#991b1b', label: '🚔 Arrest' },
+    'CRIME': { bg: '#f5f3ff', border: '#7c3aed', badge: '#7c3aed', text: '#5b21b6', label: '📋 Crime' },
+    'CITATION': { bg: '#fffbeb', border: '#f59e0b', badge: '#f59e0b', text: '#b45309', label: '🚗 Citation' },
+    'ACCIDENT': { bg: '#fff7ed', border: '#ea580c', badge: '#ea580c', text: '#c2410c', label: '💥 Accident' },
+    'SEX_OFFENDER': { bg: '#fae8ff', border: '#d946ef', badge: '#d946ef', text: '#86198f', label: '⚠️ Sex Off.' },
+    'PROBATION': { bg: '#ffedd5', border: '#f97316', badge: '#f97316', text: '#9a3412', label: '🛑 Probation' },
+    'PAROLE': { bg: '#ecfccb', border: '#84cc16', badge: '#84cc16', text: '#3f6212', label: '⚖️ Parole' },
+    'DOC': { bg: '#f3f4f6', border: '#6b7280', badge: '#6b7280', text: '#1f2937', label: '🏛️ DOC' }
   };
 
   const handleSearch = async () => {
@@ -955,7 +1013,8 @@ const View360Content = ({ mapHeight, setMapHeight, onRowClick }) => {
                 </thead>
                 <tbody>
                   {results.map((row, i) => {
-                    const style = typeStyles[row.key] || typeStyles['AR'];
+                    const style = typeStyles[row.type] || typeStyles['ARREST'];
+                    const dateDisplay = row.date ? new Date(row.date).toLocaleDateString() : 'N/A';
                     return (
                       <tr
                         key={i}
@@ -979,9 +1038,9 @@ const View360Content = ({ mapHeight, setMapHeight, onRowClick }) => {
                             fontWeight: 600
                           }}>{style.label}</span>
                         </td>
-                        <td style={{ padding: '10px', color: style.text, fontWeight: 500 }}>{formatDateTime(row.event_time)}</td>
+                        <td style={{ padding: '10px', color: style.text, fontWeight: 500 }}>{dateDisplay}</td>
                         <td style={{ padding: '10px', fontWeight: 600 }}>{row.name || 'N/A'}</td>
-                        <td style={{ padding: '10px' }}>{row.charge || 'N/A'}</td>
+                        <td style={{ padding: '10px' }}>{row.details || row.charge || 'N/A'}</td>
                         <td style={{ padding: '10px', color: '#6b7280' }}>{row.location || 'N/A'}</td>
                       </tr>
                     );
@@ -996,53 +1055,136 @@ const View360Content = ({ mapHeight, setMapHeight, onRowClick }) => {
   );
 };
 
-function AppContent() {
-  const [tables, setTables] = useState([])
-  // we query both tables by default; table selector removed
-  const [selectedTable, setSelectedTable] = useState('')
-  const [schema, setSchema] = useState(null)
-  const [data, setData] = useState([])
-  const [mapPoints, setMapPoints] = useState([])
-  const [cadLimit, setCadLimit] = useState(100)
-  const [arrestLimit, setArrestLimit] = useState(100)
-  // Display limits for "Recent" tab
-  const [recentCadLimit, setRecentCadLimit] = useState(5)
-  const [recentArrestLimit, setRecentArrestLimit] = useState(5)
-  const [filters, setFilters] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-  const [distanceKm, setDistanceKm] = useState('')
-  const [centerLat, setCenterLat] = useState('')
-  const [centerLng, setCenterLng] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState([])
-  const [cadResults, setCadResults] = useState([])
-  const [arrestResults, setArrestResults] = useState([])
-  const [crimeResults, setCrimeResults] = useState([])
-  const [reoffendersResults, setReoffendersResults] = useState([])
-  const [sexOffenderResults, setSexOffenderResults] = useState([])
-  const [correctionsResults, setCorrectionsResults] = useState([])
-  const [dispatchResults, setDispatchResults] = useState([])
-  const [trafficResults, setTrafficResults] = useState([])
-  const [jailResults, setJailResults] = useState([]) // New State
-  const [databaseStats, setDatabaseStats] = useState({}) // New State
-  const [selectedInmate, setSelectedInmate] = useState(null) // New State
-  const [selectedSexOffender, setSelectedSexOffender] = useState(null) // New State
-  const [selectedOffender, setSelectedOffender] = useState(null) // State for Probation/Parole modal
-  const [selectedViolator, setSelectedViolator] = useState(null) // State for Violators modal
-  const [selected360Record, setSelected360Record] = useState(null) // State for 360 tab modal
-  const [mapHeight, setMapHeight] = useState(360) // Lifted state
-  const mapRef = useRef(null)
-  // Fetch limit for Crime tab, display limit for Recent tab
-  const [crimeLimit, setCrimeLimit] = useState(100)
-  const [recentCrimeLimit, setRecentCrimeLimit] = useState(5)
+// 2. DEFINE COLUMNS FOR THE NEW GRIDS
+const crimeColumns = [
+  { key: 'event_time', name: 'event_time' },
+  { key: 'charge', name: 'Charge' },
+  { key: 'name', name: 'Name' },
+  { key: 'location', name: 'Location' },
+  { key: 'agency', name: 'Agency' },
+  { key: 'event_number', name: 'Event #' }
+]
+
+const arrestColumns = [
+  { key: 'event_time', name: 'event_time' },
+  { key: 'charge', name: 'Charge' },
+  { key: 'name', name: 'Name' },
+  { key: 'location', name: 'Location' },
+  { key: 'agency', name: 'Agency' },
+  { key: 'event_number', name: 'Event #' }
+];
+
+const reoffenderColumns = [
+  { key: 'event_time', name: 'Arrest Time' },
+  { key: 'ArrestRecordName', name: 'Arrest Name' },
+  { key: 'ArrestCharge', name: 'Arrest Charge' },
+  { key: 'OriginalOffenses', name: 'Original Offenses' },
+];
+
+const sexOffenderColumns = [
+  { key: 'first_name', name: 'First Name' },
+  { key: 'middle_name', name: 'Middle Name' },
+  { key: 'last_name', name: 'Last Name' },
+  { key: 'address_line_1', name: 'Address' },
+  { key: 'city', name: 'City' },
+  { key: 'tier', name: 'Tier' }
+];
+
+const incidentColumns = [
+  { key: 'starttime', name: 'Start Time' },
+  { key: 'nature', name: 'Nature' },
+  { key: 'address', name: 'Address' },
+  { key: 'agency', name: 'Agency' },
+  { key: 'service', name: 'Service' }
+]
+
+const correctionsColumns = [
+  { key: 'DateScraped', name: 'Date Scraped' },
+  { key: 'Name', name: 'Name' },
+  { key: 'Age', name: 'Age' },
+  { key: 'Gender', name: 'Gender' },
+  { key: 'Offense', name: 'Offense' },
+  { key: 'Location', name: 'Location' }
+]
+
+const dispatchColumns = [
+  { key: 'TimeReceived', name: 'Time Received' },
+  { key: 'NatureCode', name: 'Nature' },
+  { key: 'LocationAddress', name: 'Address' },
+  { key: 'AgencyCode', name: 'Agency' },
+  { key: 'IncidentNumber', name: 'Incident #' }
+]
+
+const trafficColumns = [
+  { key: 'event_time', name: 'Event Time' },
+  { key: 'charge', name: 'Charge' },
+  { key: 'location', name: 'Location' },
+  { key: 'name', name: 'Name' },
+  { key: 'key', name: 'Type' }
+]
+
+const jailColumns = [
+  { key: 'arrest_date', name: 'Booked Date' },
+  { key: 'lastname', name: 'Last Name' },
+  { key: 'firstname', name: 'First Name' },
+  { key: 'charges', name: 'Charges' },
+  { key: 'total_bond_amount', name: 'Bond' }
+]
+
+export function AppContent() {
+  const [activeTab, setActiveTab] = useState('Home');
+  const [loading, setLoading] = useState(false);
+
+  // Theme State
+  const [theme, setTheme] = useState('day'); // 'day' | 'night'
+
+  const [cadResults, setCadResults] = useState([]);
+  const [arrestResults, setArrestResults] = useState([]);
+  const [crimeResults, setCrimeResults] = useState([]);
+  const [trafficResults, setTrafficResults] = useState([]);
+  const [sexOffenderResults, setSexOffenderResults] = useState([]);
+  const [correctionsResults, setCorrectionsResults] = useState([]);
+  const [reoffendersResults, setReoffendersResults] = useState([]);
+  const [jailResults, setJailResults] = useState([]);
+  const [dispatchResults, setDispatchResults] = useState([]);
+  const [databaseStats, setDatabaseStats] = useState({
+    cad: { count: 0, latest: null },
+    arrests: { count: 0, latest: null },
+    crime: { count: 0, latest: null },
+    traffic: { count: 0, latest: null },
+    sex_offenders: { count: 0, latest: null },
+    corrections: { count: 0, latest: null },
+    jail: { count: 0, latest: null }
+  });
+
+  const [mapHeight, setMapHeight] = useState(400);
+
+  // Selected Items needed for Modals
+  const [selectedInmate, setSelectedInmate] = useState(null);
+  const [selectedSexOffender, setSelectedSexOffender] = useState(null);
+  const [selectedOffender, setSelectedOffender] = useState(null);
+  const [selectedViolator, setSelectedViolator] = useState(null);
+  const [selected360Record, setSelected360Record] = useState(null);
+
+  // Date State for Home/Replay
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 19).replace('T', ' ');
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 19).replace('T', ' '));
+
+  // Limits
+  const [cadLimit, setCadLimit] = useState(1000);
+  const [arrestLimit, setArrestLimit] = useState(1000);
+  const [crimeLimit, setCrimeLimit] = useState(1000);
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
       // 1. Fetch all data in parallel
       const [incidentsRes, trafficRes, reoffRes, sexOffRes, corrRes, dispRes, jailRes, dbStatsRes] = await Promise.all([
-        getIncidents({ cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, filters }),
+        getIncidents({ cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, filters: '' }),
         api.getTraffic({ limit: cadLimit, dateFrom, dateTo }),
         api.getReoffenders({ limit: cadLimit, dateFrom, dateTo }),
         api.getSexOffenders({ limit: cadLimit }),
@@ -1066,8 +1208,6 @@ function AppContent() {
       // Combine for geocoding
       const combinedForMap = [...allIncidents, ...trafficRows];
 
-      // Set initial state (grids will populate immediately with ungeocoded data)
-      // We need to set the derived states initially so the grids aren't empty while geocoding happens
       const updateDerivedStates = (points) => {
         const cadRows = points.filter(r => r._source === 'cadHandler');
         const arrRows = points.filter(r => r._source === 'DailyBulletinArrests');
@@ -1082,13 +1222,10 @@ function AppContent() {
         setArrestResults(arrRows);
         setCrimeResults(crimeRows);
         setTrafficResults(trafRows);
-        setResults(points);
-        setMapPoints(points.filter(p => p.lat && p.lon)); // Only map points with coords
       };
 
       updateDerivedStates(combinedForMap);
 
-      // Set other non-mapped tabs
       setReoffendersResults(reoffRes?.response?.data?.data || []);
 
       let sexOffRows = sexOffRes?.response?.data?.data || [];
@@ -1102,152 +1239,113 @@ function AppContent() {
 
       setCorrectionsResults(corrRes?.response?.data?.data || []);
       setDispatchResults(dispRes?.response?.data?.data || []);
-      setJailResults(jailRes?.response?.data?.data || []); // Set Jail Results
-      setDatabaseStats(dbStatsRes || {}); // Set DB Stats
+      setJailResults(jailRes?.response?.data?.data || []);
+      setDatabaseStats(dbStatsRes || {});
 
-      setLoading(false); // UI is now interactive
-
-      // 2. Background Geocoding REMOVED
-      // The frontend now relies on the backend (and backfill script) to provide lat/lon coordinates.
-      // No client-side geocoding is performed.
-
+      setLoading(false);
 
     } catch (err) {
       console.error('Error fetching data', err);
       setLoading(false);
     }
-  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo]);
+  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, setLoading, setCadResults, setArrestResults, setCrimeResults, setTrafficResults, setReoffendersResults, setSexOffenderResults, setCorrectionsResults, setDispatchResults, setJailResults, setDatabaseStats]);
 
   useEffect(() => {
     fetchData();
-  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo])
+  }, [cadLimit, arrestLimit, crimeLimit, dateFrom, dateTo, fetchData])
 
-  // When filters change, fetch geocoded points for the map.
-  useEffect(() => {
-    // This effect is no longer needed, as fetchData now handles map points.
-    // Kept here to show its removal. It can be deleted.
-  }, [dateFrom, dateTo, filters, recentCadLimit, recentArrestLimit, recentCrimeLimit]);
+  // Determine styles based on theme
+  const isNight = theme === 'night';
+  const appStyle = {
+    fontFamily: "'Inter', sans-serif",
+    height: '100vh',
+    display: 'flex',
+    backgroundColor: isNight ? '#111827' : '#f3f4f6',
+    color: isNight ? '#f3f4f6' : '#1f2937'
+  };
 
-  async function runQuery() {
-    await fetchData();
-  }
+  const headerStyle = {
+    backgroundColor: isNight ? '#1f2937' : '#3b82f6',
+    color: 'white',
+    padding: '16px 24px',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  };
 
-  // helper to zoom to a row's coordinates
-  function zoomToRow(r) {
-    let lat = r.lat || r.Lat || null
-    let lon = r.lon || r.Lon || null
-    let geox = r.geox || r.Geox || r['geox']
-    let geoy = r.geoy || r.Geoy || r['geoy']
-    if (!lat && geox && geoy) { lat = Number(geoy); lon = Number(geox) }
-    if (lat && lon) { if (mapRef.current && mapRef.current.setView) mapRef.current.setView([Number(lat), Number(lon)], 14) }
-  }
-
-  function fitMarkers() {
-    try {
-      const coords = data.map(r => {
-        let lat = r.lat || r.Lat || null
-        let lon = r.lon || r.Lon || null
-        let geox = r.geox || r.Geox || r['geox']
-        let geoy = r.geoy || r.Geoy || r['geoy']
-        if (!lat && geox && geoy) { lat = Number(geoy); lon = Number(geox) }
-        if (lat && lon) return [Number(lat), Number(lon)]
-        return null
-      }).filter(Boolean)
-      if (coords.length === 0) return
-      if (mapRef.current && mapRef.current.fitBounds) mapRef.current.fitBounds(coords, { padding: [50, 50] })
-    } catch (e) { console.warn('fitMarkers failed', e) }
-  }
-
-  function centerDubuque() {
-    if (mapRef.current && mapRef.current.setView) mapRef.current.setView([42.5006, -90.6646], 12)
-  }
-
-  // 2. DEFINE COLUMNS FOR THE NEW GRIDS
-  const crimeColumns = [
-    { key: 'event_time', name: 'event_time' },
-    { key: 'charge', name: 'Charge' },
-    { key: 'name', name: 'Name' },
-    { key: 'location', name: 'Location' },
-    { key: 'agency', name: 'Agency' },
-    { key: 'event_number', name: 'Event #' }
-  ]
-
-  const arrestColumns = [
-    { key: 'event_time', name: 'event_time' },
-    { key: 'charge', name: 'Charge' },
-    { key: 'name', name: 'Name' },
-    { key: 'location', name: 'Location' },
-    { key: 'agency', name: 'Agency' },
-    { key: 'event_number', name: 'Event #' }
-  ];
-
-  const reoffenderColumns = [
-    { key: 'event_time', name: 'Arrest Time' },
-    { key: 'ArrestRecordName', name: 'Arrest Name' },
-    { key: 'ArrestCharge', name: 'Arrest Charge' },
-    { key: 'OriginalOffenses', name: 'Original Offenses' },
-  ];
-
-  const sexOffenderColumns = [
-    { key: 'first_name', name: 'First Name' },
-    { key: 'middle_name', name: 'Middle Name' },
-    { key: 'last_name', name: 'Last Name' },
-    { key: 'address_line_1', name: 'Address' },
-    { key: 'city', name: 'City' },
-    { key: 'tier', name: 'Tier' }
-  ];
-
-  const incidentColumns = [
-    { key: 'starttime', name: 'Start Time' },
-    { key: 'nature', name: 'Nature' },
-    { key: 'address', name: 'Address' },
-    { key: 'agency', name: 'Agency' },
-    { key: 'service', name: 'Service' }
-  ]
-
-  const correctionsColumns = [
-    { key: 'DateScraped', name: 'Date Scraped' },
-    { key: 'Name', name: 'Name' },
-    { key: 'Age', name: 'Age' },
-    { key: 'Gender', name: 'Gender' },
-    { key: 'Offense', name: 'Offense' },
-    { key: 'Location', name: 'Location' }
-  ]
-
-  const dispatchColumns = [
-    { key: 'TimeReceived', name: 'Time Received' },
-    { key: 'NatureCode', name: 'Nature' },
-    { key: 'LocationAddress', name: 'Address' },
-    { key: 'AgencyCode', name: 'Agency' },
-    { key: 'IncidentNumber', name: 'Incident #' }
-  ]
-
-  const trafficColumns = [
-    { key: 'event_time', name: 'Event Time' },
-    { key: 'charge', name: 'Charge' },
-    { key: 'location', name: 'Location' },
-    { key: 'name', name: 'Name' },
-    { key: 'key', name: 'Type' }
-  ]
-
-  const jailColumns = [
-    { key: 'arrest_date', name: 'Booked Date' },
-    { key: 'lastname', name: 'Last Name' },
-    { key: 'firstname', name: 'First Name' },
-    { key: 'charges', name: 'Charges' },
-    { key: 'total_bond_amount', name: 'Bond' }
-  ]
+  const containerStyle = {
+    flex: 1,
+    padding: '24px',
+    overflowY: 'auto'
+  };
 
   return (
-    <div className="app-container">
-      <header className="header">
-        <h1>CrimeTime</h1>
-      </header>
-      <div className="content-container">
-        <div className="main-content">
-          {/* 3. UPDATE TABS */}
+    <div className={`app-container ${isNight ? 'theme-night' : 'theme-day'}`} style={appStyle}>
+      <div style={headerStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>CrimeTime</h1>
+          {loading && <span style={{ fontSize: '14px', opacity: 0.8 }}>⚡ Updating...</span>}
+        </div>
+
+        {/* Theme Selector */}
+        <select
+          value={theme}
+          onChange={e => setTheme(e.target.value)}
+          style={{
+            padding: '8px 12px', borderRadius: '6px', border: 'none',
+            backgroundColor: isNight ? '#374151' : 'white',
+            color: isNight ? 'white' : '#1f2937',
+            cursor: 'pointer', fontWeight: '500'
+          }}
+        >
+          <option value="day">☀️ Day Mode</option>
+          <option value="night">🌙 Night Mode</option>
+        </select>
+      </div>
+
+      <div style={containerStyle}>
+        {/* Pass theme to main content wrapper if needed for specific internal styling overriding */}
+        <div style={{ backgroundColor: isNight ? '#1f2937' : 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Tabs>
+
+            {/* 0. Home Tab */}
             <Tab label="Home">
+              <div className="home-container">
+                <a href="http://realdubuque.news" target="_blank" rel="noopener noreferrer" className="home-link">
+                  Real Dubuque News ↗
+                </a>
+              </div>
+            </Tab>
+
+            {/* 1. 360 Degree Tab */}
+            <Tab label="360°">
+              <View360Content
+                mapHeight={mapHeight}
+                setMapHeight={setMapHeight}
+                onRowClick={(row) => {
+                  if (row.type === 'SEX_OFFENDER') {
+                    setSelectedSexOffender(row.raw);
+                  } else if (['PROBATION', 'PAROLE', 'DOC'].includes(row.type)) {
+                    setSelectedOffender(row.id);
+                  } else {
+                    setSelected360Record(row);
+                  }
+                }}
+              />
+            </Tab>
+
+            {/* 3. 720 Degree Tab */}
+            <Tab label="720°">
+              <Tab720
+                onRowClick={() => { }}
+                mapHeight={mapHeight}
+                setMapHeight={setMapHeight}
+              />
+            </Tab>
+
+            {/* 2. Replay Tab (formerly Home) */}
+            <Tab label="Replay">
               <CrimeTimeReplay
                 cadResults={cadResults}
                 arrestResults={arrestResults}
@@ -1256,59 +1354,26 @@ function AppContent() {
                 trafficResults={trafficResults}
               />
             </Tab>
-            <Tab label="360°">
-              <View360Content
+
+            {/* 4. Records Tab */}
+            <Tab label="Records">
+              <RecordsTab
+                correctionsColumns={correctionsColumns}
+                reoffenderColumns={reoffenderColumns}
+                sexOffenderColumns={sexOffenderColumns}
+                jailColumns={jailColumns}
+
+                setSelectedOffender={setSelectedOffender}
+                setSelectedViolator={setSelectedViolator}
+                setSelectedSexOffender={setSelectedSexOffender}
+                setSelectedInmate={setSelectedInmate}
+
                 mapHeight={mapHeight}
                 setMapHeight={setMapHeight}
-                onRowClick={setSelected360Record}
               />
             </Tab>
-            <Tab label="Incidents">
-              <MapWithData data={cadResults} columns={incidentColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
-            </Tab>
-            <Tab label="Dispatch">
-              <FilterableDataGrid data={dispatchResults} columns={dispatchColumns} loading={loading} />
-            </Tab>
-            <Tab label="Crime">
-              <MapWithData data={crimeResults} columns={crimeColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
-            </Tab>
-            <Tab label="Arrests">
-              <MapWithData data={arrestResults} columns={arrestColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
-            </Tab>
-            <Tab label="Traffic">
-              <MapWithData data={trafficResults} columns={trafficColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} />
-            </Tab>
-            <Tab label="Probation/Parole">
-              <div style={{ padding: '10px', background: '#e0f2fe', marginBottom: '10px', borderRadius: '4px', fontSize: '14px' }}>
-                ℹ️ Click on any row to view complete offender record and charges.
-              </div>
-              <FilterableDataGrid
-                data={correctionsResults}
-                columns={correctionsColumns}
-                loading={loading}
-                onRowClick={(row) => setSelectedOffender(row.OffenderNumber)}
-              />
-            </Tab>
-            <Tab label="Violators">
-              <div style={{ padding: '10px', background: '#fef2f2', marginBottom: '10px', borderRadius: '4px', fontSize: '14px', borderLeft: '4px solid #dc2626' }}>
-                ⚠️ Click on any row to view arrest details alongside DOC offender record.
-              </div>
-              <FilterableDataGrid
-                data={reoffendersResults}
-                columns={reoffenderColumns}
-                loading={loading}
-                onRowClick={setSelectedViolator}
-              />
-            </Tab>
-            <Tab label="Sex Offenders">
-              <MapWithData data={sexOffenderResults} columns={sexOffenderColumns} loading={loading} mapHeight={mapHeight} setMapHeight={setMapHeight} onRowClick={setSelectedSexOffender} />
-            </Tab>
-            <Tab label="Jail">
-              <div style={{ padding: '10px', background: '#e0f2fe', marginBottom: '10px', borderRadius: '4px', fontSize: '14px' }}>
-                ℹ️ Click on any row to view inmate photo and details.
-              </div>
-              <FilterableDataGrid data={jailResults} columns={jailColumns} onRowClick={setSelectedInmate} loading={loading} />
-            </Tab>
+
+            {/* 5. Data Science Tab */}
             <Tab label="Data Science">
               <DataScience
                 cadResults={cadResults}
@@ -1355,9 +1420,7 @@ function AppContent() {
                 loading={loading}
               />
             </Tab>
-            <Tab label="Proximity">
-              <Proximity />
-            </Tab>
+
           </Tabs>
         </div>
       </div>
@@ -1371,5 +1434,6 @@ function AppContent() {
 }
 
 export default function App() {
-  return <AppContent />;
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileApp /> : <AppContent />;
 }

@@ -6,6 +6,7 @@ const SplitView = ({
     mapHeight,
     setMapHeight,
     children,
+    mapChildren, // New prop for map overlays
     mapRef,
     onFitMarkers,
     onCenterDubuque
@@ -45,7 +46,9 @@ const SplitView = ({
                         zoomTo={pos => {
                             if (mapRef.current && mapRef.current.flyTo) mapRef.current.flyTo(pos, 14);
                         }}
-                    />
+                    >
+                        {mapChildren}
+                    </MapView>
                 </div>
             </section>
 

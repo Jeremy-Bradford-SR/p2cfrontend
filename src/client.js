@@ -133,18 +133,19 @@ async function proximitySearch({ address, days, nature, distance }) {
 
 async function getReoffenders(opts = {}) {
   const limit = opts.limit || 50;
+  const page = opts.page || 1;
+  const offset = (page - 1) * limit;
+
   let where = '';
   if (opts.dateFrom) where += ` AND A.event_time >= '${opts.dateFrom.replace(/'/g, "''")}'`;
   if (opts.dateTo) where += ` AND A.event_time <= '${opts.dateTo.replace(/'/g, "''")}'`;
 
   const sql = `
 SELECT
-    TOP ${limit}
     A.name AS ArrestRecordName,
     A.charge AS ArrestCharge,
     
     -- Correlated Subquery for Original Offenses:
-    -- Finds all unique offenses associated with the offender's name
     (SELECT 
         STRING_AGG(T3.Offense, ', ') WITHIN GROUP (ORDER BY T3.Offense)
      FROM 
@@ -153,17 +154,16 @@ SELECT
         (SELECT DISTINCT OffenderNumber, Offense FROM dbo.Offender_Detail WHERE Offense IS NOT NULL) AS T3 
         ON T1.OffenderNumber = T3.OffenderNumber
      WHERE 
-        T1.Name = S.Name -- Links to the 'S.Name' from the outer query
+        T1.Name = S.Name
     ) AS OriginalOffenses,
 
     -- Correlated Subquery for Offender Numbers:
-    -- Finds all unique offender numbers associated with the offender's name
     (SELECT 
         STRING_AGG(T2.OffenderNumber, ', ') WITHIN GROUP (ORDER BY T2.OffenderNumber)
      FROM 
         (SELECT DISTINCT Name, OffenderNumber FROM dbo.Offender_Summary) AS T2
      WHERE 
-        T2.Name = S.Name -- Links to the 'S.Name' from the outer query
+        T2.Name = S.Name
     ) AS OffenderNumbers,
     
     A.name AS ArrestRecordName,
@@ -179,15 +179,19 @@ GROUP BY
     A.charge,
     A.event_time,
     A.location,
-    S.Name -- S.Name must be in GROUP BY because it's used in the subqueries
+    S.Name
 ORDER BY 
-    A.event_time DESC;
+    A.event_time DESC
+OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY;
       `;
   return rawQuery(sql);
 }
 
 async function getSexOffenders(opts = {}) {
-  const limit = opts.limit || 500;
+  const limit = opts.limit || 50;
+  const page = opts.page || 1;
+  const offset = (page - 1) * limit;
+
   const sql = `
     SELECT 
       registrant_id,
@@ -212,12 +216,93 @@ async function getSexOffenders(opts = {}) {
       registrant_cluster,
       last_changed
     FROM dbo.sexoffender_registrants
+    ORDER BY last_changed DESC
+    OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY
+  `;
+  return rawQuery(sql);
+}
+
+async function getProbationStats() {
+  const sql = `
+    SELECT
+      (SELECT COUNT(*) FROM dbo.Offender_Summary) as TotalOffenders,
+      
+      -- Supervision Status Counts
+      (SELECT SupervisionStatus as name, COUNT(*) as value 
+       FROM dbo.Offender_Charges 
+       WHERE SupervisionStatus IS NOT NULL 
+       GROUP BY SupervisionStatus 
+       FOR JSON PATH) as SupervisionDist,
+
+      -- Offense Class Counts
+      (SELECT OffenseClass as name, COUNT(*) as value 
+       FROM dbo.Offender_Charges 
+       WHERE OffenseClass IS NOT NULL 
+       GROUP BY OffenseClass 
+       FOR JSON PATH) as ClassDist,
+
+      -- Gender Counts
+      (SELECT Gender as name, COUNT(*) as value 
+       FROM dbo.Offender_Summary 
+       WHERE Gender IS NOT NULL 
+       GROUP BY Gender 
+       FOR JSON PATH) as GenderDist,
+
+
+
+      -- Age Stats (Average)
+      (SELECT AVG(CAST(Age as FLOAT)) FROM dbo.Offender_Summary WHERE Age > 0) as AvgAge,
+
+      -- Top Offenses
+      (SELECT TOP 10 Offense as name, COUNT(*) as value 
+       FROM dbo.Offender_Detail 
+       WHERE Offense IS NOT NULL 
+       GROUP BY Offense 
+       ORDER BY COUNT(*) DESC 
+       FOR JSON PATH) as TopOffenses,
+
+      -- County Distribution
+      (SELECT TOP 10 CountyOfCommitment as name, COUNT(*) as value 
+       FROM dbo.Offender_Charges 
+       WHERE CountyOfCommitment IS NOT NULL 
+       GROUP BY CountyOfCommitment 
+       ORDER BY COUNT(*) DESC 
+       FOR JSON PATH) as CountyDist,
+
+      -- Commitment Trend
+      (SELECT TOP 12 FORMAT(CommitmentDate, 'yyyy-MM') as date, COUNT(*) as count
+       FROM dbo.Offender_Detail 
+       WHERE CommitmentDate IS NOT NULL 
+       GROUP BY FORMAT(CommitmentDate, 'yyyy-MM') 
+       ORDER BY date DESC 
+       FOR JSON PATH) as CommitmentTrend,
+
+      -- Ending Soon (Next 90 Days)
+      (SELECT TOP 10 S.Name, C.EndDate, D.Offense
+       FROM dbo.Offender_Charges C
+       JOIN dbo.Offender_Summary S ON C.OffenderNumber = S.OffenderNumber
+       LEFT JOIN dbo.Offender_Detail D ON C.OffenderNumber = D.OffenderNumber
+       WHERE C.EndDate BETWEEN GETDATE() AND DATEADD(day, 90, GETDATE())
+       ORDER BY C.EndDate ASC
+       FOR JSON PATH) as EndingSoon,
+
+       -- Longest Remaining
+      (SELECT TOP 10 S.Name, C.EndDate, D.Offense
+       FROM dbo.Offender_Charges C
+       JOIN dbo.Offender_Summary S ON C.OffenderNumber = S.OffenderNumber
+       LEFT JOIN dbo.Offender_Detail D ON C.OffenderNumber = D.OffenderNumber
+       WHERE C.EndDate > DATEADD(year, 1, GETDATE())
+       ORDER BY C.EndDate DESC
+       FOR JSON PATH) as LongestRemaining
   `;
   return rawQuery(sql);
 }
 
 async function getCorrections(opts = {}) {
-  const limit = opts.limit || 500;
+  const limit = opts.limit || 50;
+  const page = opts.page || 1;
+  const offset = (page - 1) * limit;
+
   const sql = `
     SELECT 
       S.OffenderNumber,
@@ -225,18 +310,22 @@ async function getCorrections(opts = {}) {
       S.Gender,
       S.Age,
       S.DateScraped,
-      D.Location,
-      D.Offense,
-      D.CommitmentDate,
-      D.TDD_SDD,
-      C.SupervisionStatus,
-      C.OffenseClass,
-      C.CountyOfCommitment,
-      C.EndDate
+      MAX(D.Location) as Location, -- Arbitrary pick if multiple
+      MAX(D.Offense) as Offense,   -- Arbitrary pick
+      MAX(D.CommitmentDate) as CommitmentDate,
+      MAX(D.TDD_SDD) as TDD_SDD,
+      
+      -- Aggregate Charges
+      STRING_AGG(CONCAT(C.SupervisionStatus, ' (', C.OffenseClass, ')'), ', ') as SupervisionStatus,
+      STRING_AGG(C.OffenseClass, ', ') as OffenseClass,
+      MAX(C.CountyOfCommitment) as CountyOfCommitment,
+      MAX(C.EndDate) as EndDate
     FROM dbo.Offender_Summary AS S
     LEFT JOIN dbo.Offender_Detail AS D ON S.OffenderNumber = D.OffenderNumber
     LEFT JOIN dbo.Offender_Charges AS C ON S.OffenderNumber = C.OffenderNumber
+    GROUP BY S.OffenderNumber, S.Name, S.Gender, S.Age, S.DateScraped
     ORDER BY S.DateScraped DESC
+    OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY
   `;
   return rawQuery(sql);
 }
@@ -273,7 +362,11 @@ async function getTraffic(opts = {}) {
   return rawQuery(sql);
 }
 
-async function getJailInmates() {
+async function getJailInmates(opts = {}) {
+  const limit = opts.limit || 50;
+  const page = opts.page || 1;
+  const offset = (page - 1) * limit;
+
   const sql = `
     SELECT 
       i.book_id, 
@@ -288,6 +381,7 @@ async function getJailInmates() {
       STUFF((SELECT ', ' + charge_description FROM jail_charges WHERE book_id = i.book_id ORDER BY charge_description FOR XML PATH('')), 1, 2, '') as charges
     FROM jail_inmates i 
     ORDER BY i.arrest_date DESC
+    OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY
   `;
   return rawQuery(sql);
 }
@@ -379,13 +473,13 @@ async function getCrimeByName(firstName, lastName) {
 }
 
 // Comprehensive 360 search - searches ALL records by name (no limit)
-async function search360(searchName) {
+async function search360(searchName, page = 1, limit = 50) {
   if (!searchName || searchName.trim().length < 2) {
     return { success: false, response: { error: 'Search term must be at least 2 characters' } };
   }
 
   try {
-    const params = new URLSearchParams({ q: searchName });
+    const params = new URLSearchParams({ q: searchName, page, limit });
     const url = `${PROXY}/search360?${params.toString()}`;
     const r = await api.get(url);
     // The proxy returns { data: [...] }, and 'response.data' needs to be the axios response object structure expected by caller
@@ -398,9 +492,21 @@ async function search360(searchName) {
   }
 }
 
+// Unified P2C Search
+async function searchP2C(query, page = 1, limit = 20) {
+  try {
+    const params = new URLSearchParams({ q: query, page, limit });
+    const url = `${PROXY}/searchP2C?${params.toString()}`;
+    const r = await api.get(url);
+    return { success: true, response: { status: r.status, data: r.data } };
+  } catch (e) {
+    return { success: false, response: { error: e.message } };
+  }
+}
+
 async function getDatabaseStats() {
   // Queries for DB size and oldest records in main tables
-  const sizeSql = "SELECT SUM(size) * 8 / 1024 AS SizeMB FROM sys.master_files WHERE database_id = DB_ID()";
+  const sizeSql = "SELECT SUM(size) * 8 / 1024 AS SizeMB FROM sys.database_files";
   const oldestCadSql = "SELECT MIN(starttime) as val FROM cadHandler";
   const oldestArrestSql = "SELECT MIN(event_time) as val FROM DailyBulletinArrests";
 
@@ -411,8 +517,11 @@ async function getDatabaseStats() {
       rawQuery(oldestArrestSql)
     ]);
 
+    console.log('[getDatabaseStats] Size Response:', sizeRes);
+    const sizeVal = sizeRes.response?.data?.data?.[0]?.SizeMB || 0;
+
     return {
-      sizeMB: sizeRes.response?.data?.data?.[0]?.SizeMB || 0,
+      sizeMB: sizeVal,
       oldestCad: cadRes.response?.data?.data?.[0]?.val,
       oldestArrest: arrestRes.response?.data?.data?.[0]?.val
     };
@@ -426,7 +535,7 @@ async function getDatabaseStats() {
 async function getOffenderDetail(offenderNumber) {
   if (!offenderNumber) return { success: false, response: { error: 'OffenderNumber is required' } };
 
-  const sanitized = String(offenderNumber).replace(/'/g, "''");
+  const sanitized = String(offenderNumber).trim().replace(/'/g, "''");
 
   // Get summary info
   const summarySql = `
@@ -474,17 +583,47 @@ async function getOffenderDetail(offenderNumber) {
   }
 }
 
+// Fetch offender details by Name (Fallback for 360 View)
+async function getOffenderDetailByName(firstName, lastName) {
+  if (!firstName && !lastName) return { success: false, response: { error: 'Name is required' } };
+
+  const f = firstName ? firstName.replace(/'/g, "''") : '%';
+  const l = lastName ? lastName.replace(/'/g, "''") : '%';
+
+  // Try exact match first, then LIKE
+  const sql = `
+    SELECT TOP 1 OffenderNumber 
+    FROM dbo.Offender_Summary 
+    WHERE (Name LIKE '${f} % ${l}' OR Name LIKE '${l}, ${f} %')
+    ORDER BY DateScraped DESC
+  `;
+
+  try {
+    const res = await rawQuery(sql);
+    const num = res.response?.data?.data?.[0]?.OffenderNumber;
+
+    if (num) {
+      console.log(`[client] Found OffenderNumber ${num} for ${firstName} ${lastName}`);
+      return await getOffenderDetail(num);
+    }
+    return { success: false, response: { error: 'Offender not found' } };
+  } catch (e) {
+    return { success: false, response: { error: e.message } };
+  }
+}
+
 // also export individually
-export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 }
+export { getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getOffenderDetailByName, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360, searchP2C, getProbationStats }
 
 // Run a raw SQL query string via the proxy /query endpoint. Caller must supply a full SELECT.
 async function rawQuery(sql) {
   try {
     if (!sql || typeof sql !== 'string') throw new Error('sql must be a string');
     // Basic safety: only allow SELECT queries
-    if (!/^[\s]*select/i.test(sql)) throw new Error('Only SELECT queries are allowed');
+    if (!/^\s*select/i.test(sql)) throw new Error('Only SELECT queries are allowed');
     const params = new URLSearchParams({ sql });
-    const url = `${PROXY}/rawQuery?${params.toString()}`;
+    // Add cache buster
+    const url = `${PROXY}/rawQuery?${params.toString()}&_t=${Date.now()}`;
     const r = await api.get(url);
     return { success: true, request: { method: 'GET', url }, response: { status: r.status, data: r.data } };
   } catch (e) {
@@ -494,4 +633,4 @@ async function rawQuery(sql) {
 
 export { rawQuery };
 
-export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360 };
+export default { listTables, getSchema, queryTable, getIncidents, getReoffenders, getSexOffenders, getCorrections, getDispatch, getTraffic, proximitySearch, rawQuery, getJailInmates, getJailImage, getDatabaseStats, getOffenderDetail, getJailByName, getArrestsByName, getTrafficByName, getCrimeByName, search360, searchP2C, getProbationStats };

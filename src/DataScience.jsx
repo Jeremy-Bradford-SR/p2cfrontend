@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell, AreaChart, Area, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -7,6 +7,7 @@ import {
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import 'leaflet/dist/leaflet.css';
+import { getProbationStats } from './client';
 
 // --- Constants & Styles ---
 const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#65a30d', '#0891b2', '#be123c', '#d97706'];
@@ -114,6 +115,36 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
         setSelectedInterval(val);
         if (onIntervalChange) onIntervalChange(val);
     };
+
+    const [probationStats, setProbationStats] = useState(null);
+
+    useEffect(() => {
+        let mounted = true;
+        getProbationStats().then(res => {
+            if (mounted && res.success && res.response?.data?.data?.[0]) {
+                const row = res.response.data.data[0];
+                // helper to parse JSON if needed, though rawQuery might return object if node-mssql parses it.
+                // client.js rawQuery returns rows. The columns SupervisionDist etc are JSON strings.
+                const parse = (k) => {
+                    try { return row[k] ? JSON.parse(row[k]) : [] } catch (e) { return [] }
+                };
+
+                setProbationStats({
+                    total: row.TotalOffenders,
+                    supervisionDist: parse('SupervisionDist'),
+                    classDist: parse('ClassDist'),
+                    genderDist: parse('GenderDist'),
+                    avgAge: row.AvgAge,
+                    topOffenses: parse('TopOffenses'),
+                    countyDist: parse('CountyDist'),
+                    commitmentTrend: parse('CommitmentTrend'),
+                    endingSoon: parse('EndingSoon').map(x => ({ ...x, daysRemaining: Math.ceil((new Date(x.EndDate) - new Date()) / (86400000)) })),
+                    longestRemaining: parse('LongestRemaining').map(x => ({ ...x, daysRemaining: Math.ceil((new Date(x.EndDate) - new Date()) / (86400000)) }))
+                });
+            }
+        });
+        return () => { mounted = false; };
+    }, []);
 
     // --- Data Processing ---
 
@@ -448,121 +479,21 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
     }, [trafficResults]);
 
     const probationAnalysis = useMemo(() => {
-        // Top Offenses (from Offender_Detail.Offense)
-        const topOffenses = getTopN(correctionsResults, 'Offense', 10);
-
-        // Supervision Status Distribution (bar chart data)
-        const supervisionStatusDist = getTopN(correctionsResults, 'SupervisionStatus', 10);
-
-        // Offense Class Distribution (pie chart data)
-        const offenseClassDist = getTopN(correctionsResults, 'OffenseClass', 10);
-
-        // Gender Distribution (pie chart data)
-        const genderDist = [];
-        const genderCounts = {};
-        correctionsResults.forEach(r => {
-            if (r.Gender) {
-                const g = r.Gender.toUpperCase() === 'M' ? 'Male' : r.Gender.toUpperCase() === 'F' ? 'Female' : r.Gender;
-                genderCounts[g] = (genderCounts[g] || 0) + 1;
-            }
-        });
-        Object.entries(genderCounts).forEach(([name, value]) => {
-            genderDist.push({ name, value });
-        });
-        genderDist.sort((a, b) => b.value - a.value);
-
-        // Age Distribution (histogram-style data)
-        const ageBuckets = {
-            '18-25': 0, '26-35': 0, '36-45': 0, '46-55': 0, '56-65': 0, '65+': 0
-        };
-        correctionsResults.forEach(r => {
-            const age = parseInt(r.Age);
-            if (!isNaN(age)) {
-                if (age >= 18 && age <= 25) ageBuckets['18-25']++;
-                else if (age >= 26 && age <= 35) ageBuckets['26-35']++;
-                else if (age >= 36 && age <= 45) ageBuckets['36-45']++;
-                else if (age >= 46 && age <= 55) ageBuckets['46-55']++;
-                else if (age >= 56 && age <= 65) ageBuckets['56-65']++;
-                else if (age > 65) ageBuckets['65+']++;
-            }
-        });
-        const ageDistribution = Object.entries(ageBuckets).map(([name, value]) => ({ name, value }));
-
-        // Calculate average age
-        const ages = correctionsResults.map(r => parseInt(r.Age)).filter(a => !isNaN(a));
-        const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 'N/A';
-
-        // County of Commitment Distribution (bar chart data)
-        const countyDist = getTopN(correctionsResults, 'CountyOfCommitment', 10);
-
-        // End Date Analysis - Find longest supervision periods
-        const now = new Date();
-        const endDateData = [];
-        correctionsResults.forEach(r => {
-            if (r.EndDate) {
-                const endDate = new Date(r.EndDate);
-                if (!isNaN(endDate.getTime())) {
-                    const daysRemaining = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
-                    endDateData.push({
-                        name: r.Name || r.OffenderNumber,
-                        endDate: endDate,
-                        daysRemaining: daysRemaining,
-                        offense: r.Offense || 'N/A',
-                        offenderNumber: r.OffenderNumber
-                    });
-                }
-            }
-        });
-
-        // Sort by longest remaining time (future end dates)
-        const longestSupervision = endDateData
-            .filter(d => d.daysRemaining > 0)
-            .sort((a, b) => b.daysRemaining - a.daysRemaining)
-            .slice(0, 10);
-
-        // Supervision ending soon (within 90 days)
-        const endingSoon = endDateData
-            .filter(d => d.daysRemaining > 0 && d.daysRemaining <= 90)
-            .sort((a, b) => a.daysRemaining - b.daysRemaining)
-            .slice(0, 10);
-
-        // Commitment Date Trend (when were offenders committed - monthly)
-        const commitmentTrend = {};
-        correctionsResults.forEach(r => {
-            if (r.CommitmentDate) {
-                const d = new Date(r.CommitmentDate);
-                if (!isNaN(d.getTime())) {
-                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                    commitmentTrend[key] = (commitmentTrend[key] || 0) + 1;
-                }
-            }
-        });
-        const commitmentTrendData = Object.entries(commitmentTrend)
-            .map(([date, count]) => ({
-                date,
-                count,
-                label: new Date(date + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-            }))
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .slice(-12); // Last 12 months
-
-        // Total unique offenders
-        const uniqueOffenders = new Set(correctionsResults.map(r => r.OffenderNumber)).size;
-
+        if (!probationStats) return null;
         return {
-            topOffenses,
-            supervisionStatusDist,
-            offenseClassDist,
-            genderDist,
-            ageDistribution,
-            avgAge,
-            countyDist,
-            longestSupervision,
-            endingSoon,
-            commitmentTrendData,
-            uniqueOffenders
+            topOffenses: probationStats.topOffenses || [],
+            supervisionStatusDist: probationStats.supervisionDist || [],
+            offenseClassDist: probationStats.classDist || [],
+            genderDist: probationStats.genderDist || [],
+            ageDistribution: [], // Server-side aggregation for histograms pending
+            avgAge: probationStats.avgAge || 0,
+            countyDist: probationStats.countyDist || [],
+            longestSupervision: probationStats.longestRemaining || [],
+            endingSoon: probationStats.endingSoon || [],
+            commitmentTrendData: (probationStats.commitmentTrend || []).map(x => ({ ...x, label: x.date })),
+            uniqueOffenders: probationStats.total || 0
         };
-    }, [correctionsResults]);
+    }, [probationStats]);
 
     const sexOffenderAnalysis = useMemo(() => {
         // Tier Distribution
@@ -677,10 +608,13 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
     }, [sexOffenderResults]);
 
     const jailAnalysis = useMemo(() => {
+        // Filter for active inmates only
+        const activeInmates = jailResults.filter(r => !r.released_date);
+
         const topCharges = []; // Need to parse 'charges' string?
         // charges is a string "Charge 1, Charge 2"
         const chargeCounts = {};
-        jailResults.forEach(r => {
+        activeInmates.forEach(r => {
             if (r.charges) {
                 r.charges.split(',').forEach(c => {
                     const clean = c.trim();
@@ -694,17 +628,17 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
             .slice(0, 10);
 
         // Demographics
-        const raceDist = getTopN(jailResults, 'race', 10);
-        const sexDist = getTopN(jailResults, 'sex', 5);
+        const raceDist = getTopN(activeInmates, 'race', 10);
+        const sexDist = getTopN(activeInmates, 'sex', 5);
 
         // Avg Age
-        const ages = jailResults.map(r => parseInt(r.age)).filter(a => !isNaN(a));
+        const ages = activeInmates.map(r => parseInt(r.age)).filter(a => !isNaN(a));
         const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 'N/A';
 
         // Financials
         let totalBond = 0;
         let bondCount = 0;
-        jailResults.forEach(r => {
+        activeInmates.forEach(r => {
             if (r.total_bond_amount) {
                 const val = parseFloat(r.total_bond_amount.replace(/[^0-9.]/g, ''));
                 if (!isNaN(val)) {
@@ -1059,7 +993,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 {/* Summary Cards */}
                 <div style={{ display: 'flex', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
                     <Card title="Unique Offenders" value={probationAnalysis.uniqueOffenders?.toLocaleString() || 0} icon="👤" />
-                    <Card title="Total Records" value={correctionsResults.length.toLocaleString()} subtext="Charges & Cases" icon="📋" />
+                    <Card title="Total Records" value={(probationStats?.total || correctionsResults.length).toLocaleString()} subtext="Charges & Cases" icon="📋" />
                     <Card title="Average Age" value={probationAnalysis.avgAge} subtext="Years Old" icon="🎂" />
                     <Card title="Cases Ending Soon" value={probationAnalysis.endingSoon?.length || 0} subtext="Within 90 Days" icon="⏰" />
                 </div>
@@ -1071,7 +1005,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                             <BarChart layout="vertical" data={probationAnalysis.supervisionStatusDist} margin={{ left: 60 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
                                 <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                                <YAxis dataKey="name" type="category" width={140} tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={220} tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Bar dataKey="value" fill={COLORS[0]} radius={[0, 4, 4, 0]} barSize={22}>
                                     {probationAnalysis.supervisionStatusDist.map((entry, index) => (
@@ -1106,7 +1040,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 2: Age Distribution + Gender Distribution */}
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Age Distribution">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={probationAnalysis.ageDistribution}>
@@ -1145,7 +1079,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 3: Longest Supervision + Ending Soon */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Longest Supervision Remaining" height={280}>
                         <div style={{ overflowY: 'auto', height: '100%' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1200,13 +1134,13 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 4: County Distribution + Commitment Trend + Top Offenses */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
                     <ChartCard title="County of Commitment">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart layout="vertical" data={probationAnalysis.countyDist} margin={{ left: 20 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
                                 <XAxis type="number" hide />
-                                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Bar dataKey="value" fill={COLORS[5]} radius={[0, 4, 4, 0]} barSize={18} />
                             </BarChart>
@@ -1236,7 +1170,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                             <BarChart layout="vertical" data={probationAnalysis.topOffenses.slice(0, 7)} margin={{ left: 10 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
                                 <XAxis type="number" hide />
-                                <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={220} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Bar dataKey="value" fill={COLORS[3]} radius={[0, 4, 4, 0]} barSize={16} />
                             </BarChart>
@@ -1258,7 +1192,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 1: Map + Tier Distribution */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Offender Residency Map">
                         <DataMap points={sexOffenderAnalysis.mapPoints} color="#be123c" />
                     </ChartCard>
@@ -1293,7 +1227,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 2: Victim Breakdown + Gender Distribution */}
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Victim Demographics">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={sexOffenderAnalysis.victimBreakdown} layout="horizontal">
@@ -1332,7 +1266,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
 
                 {/* Row 3: Race Distribution + Postal Code Distribution */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Race Distribution">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -1418,7 +1352,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                     <Card title="Total Bond Value" value={`$${jailAnalysis.totalBond.toLocaleString()}`} icon="💰" />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
                     <ChartCard title="Inmate Demographics (Race)">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -1467,29 +1401,6 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     {loading && <span style={{ color: '#64748b', fontSize: '14px' }}>Loading data...</span>}
-                    <select
-                        value={selectedInterval}
-                        onChange={handleIntervalChange}
-                        style={{
-                            padding: '8px 12px',
-                            borderRadius: '6px',
-                            border: '1px solid #cbd5e1',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            color: '#334155',
-                            backgroundColor: 'white',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <option value="1wk">Last 1 Week</option>
-                        <option value="2wk">Last 2 Weeks</option>
-                        <option value="3wk">Last 3 Weeks</option>
-                        <option value="1mnth">Last 1 Month</option>
-                        <option value="3mnth">Last 3 Months</option>
-                        <option value="6mnth">Last 6 Months</option>
-                        <option value="9mnth">Last 9 Months</option>
-                        <option value="1yr">Last 1 Year</option>
-                    </select>
                 </div>
             </div>
 
@@ -1514,13 +1425,7 @@ const DataScience = ({ cadResults = [], arrestResults = [], crimeResults = [], t
             {activeTab === 'Jail' && renderJail()}
 
             {/* Offender Detail Modal */}
-            {(selectedOffender || modalLoading) && (
-                <OffenderDetailModal
-                    offender={selectedOffender}
-                    onClose={closeOffenderModal}
-                    loading={modalLoading}
-                />
-            )}
+
         </div>
     );
 };

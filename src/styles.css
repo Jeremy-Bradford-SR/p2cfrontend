@@ -11,7 +11,9 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   font-family: var(--font-family);
   background-color: var(--light-gray);
@@ -59,7 +61,7 @@ html, body, #root {
 }
 
 .sidebar {
-  display:none;
+  display: none;
 }
 
 .main-content {
@@ -69,7 +71,8 @@ html, body, #root {
 }
 
 .map-section {
-  height: 360px; /* shrink the map vertically per request */
+  height: 360px;
+  /* shrink the map vertically per request */
   position: relative;
 }
 
@@ -103,8 +106,8 @@ html, body, #root {
   gap: 1rem;
 }
 
-.date-row > div,
-.coord-row > div {
+.date-row>div,
+.coord-row>div {
   flex: 1;
 }
 
@@ -223,4 +226,174 @@ html, body, #root {
   border-bottom-color: var(--primary-color);
   color: var(--primary-color);
   font-weight: bold;
+}
+
+/* Theme Classes */
+.theme-day {
+  --bg-color: #f8fafc;
+  /* Slate-50 */
+  --text-color: #0f172a;
+  /* Slate-900 */
+  --card-bg: #ffffff;
+  --header-bg: #ffffff;
+  --header-text: #0f172a;
+  --tab-active: #2563eb;
+  /* Blue-600 */
+  --tab-inactive: #64748b;
+  /* Slate-500 */
+  --tab-hover: #f1f5f9;
+  /* Slate-100 */
+  --border-color: #e2e8f0;
+  /* Slate-200 */
+  --primary-color: #2563eb;
+  /* Blue-600 */
+  --secondary-color: #64748b;
+  /* Slate-500 */
+  --danger-color: #dc2626;
+  /* Red-600 */
+  --warning-color: #be123c;
+  /* Rose-700 */
+  --success-color: #16a34a;
+  /* Green-600 */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.theme-night {
+  --bg-color: #020617;
+  /* Slate-950 */
+  --text-color: #f8fafc;
+  /* Slate-50 */
+  --card-bg: #0f172a;
+  /* Slate-900 */
+  --header-bg: #0f172a;
+  /* Slate-900 */
+  --header-text: #f8fafc;
+  --tab-active: #38bdf8;
+  /* Sky-400 */
+  --tab-inactive: #94a3b8;
+  /* Slate-400 */
+  --tab-hover: #1e293b;
+  /* Slate-800 */
+  --border-color: #1e293b;
+  /* Slate-800 */
+  --primary-color: #38bdf8;
+  /* Sky-400 */
+  --secondary-color: #94a3b8;
+  /* Slate-400 */
+  --danger-color: #f87171;
+  /* Red-400 */
+  --warning-color: #fb7185;
+  /* Rose-400 */
+  --success-color: #4ade80;
+  /* Green-400 */
+  --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+}
+
+/* Animations & Transitions */
+.app-container,
+.header,
+.results-table tbody tr,
+.tabs li {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+.tabs li {
+  position: relative;
+  overflow: hidden;
+}
+
+.tabs li:hover {
+  background-color: var(--tab-hover);
+}
+
+.results-table tbody tr:hover {
+  transform: scale(1.002);
+  transition: transform 0.1s ease-in-out;
+  z-index: 10;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Home Tab Styles */
+.home-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 2rem;
+  animation: fadeIn 0.8s ease-out;
+}
+
+.home-link {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  text-decoration: none;
+  padding: 1rem 2rem;
+  border: 2px solid var(--primary-color);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  background: transparent;
+}
+
+.home-link:hover {
+  background: var(--primary-color);
+  color: white;
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .header h1 {
+    font-size: 1.25rem;
+  }
+
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-bottom: 2px solid var(--border-color);
+  }
+
+  .tabs li {
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .map-section {
+    height: 250px;
+  }
+
+  .results-table th,
+  .results-table td {
+    padding: 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  .home-link {
+    font-size: 1.5rem;
+    padding: 0.75rem 1.5rem;
+  }
 }

@@ -314,7 +314,7 @@ const CrimeTimeReplay = ({ cadResults = [], arrestResults = [], crimeResults = [
             </div>
 
             {/* Controls Overlay (Bottom Center) */}
-            <div style={{ position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, width: '600px', maxWidth: '90%' }}>
+            <div className="controls-overlay" style={{ position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, width: '600px', maxWidth: '90%' }}>
                 <div style={GLASS_PANEL}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -372,7 +372,7 @@ const CrimeTimeReplay = ({ cadResults = [], arrestResults = [], crimeResults = [
             </div>
 
             {/* Live Feed Overlay (Right Side) */}
-            <div style={{ position: 'absolute', top: '20px', right: '20px', bottom: '20px', width: '320px', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+            <div className="live-feed-overlay" style={{ position: 'absolute', top: '20px', right: '20px', bottom: '20px', width: '320px', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
                 <div style={{ ...GLASS_PANEL, height: '100%', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
                     <div style={{ padding: '16px', borderBottom: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.5)' }}>
                         <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -435,8 +435,8 @@ const CrimeTimeReplay = ({ cadResults = [], arrestResults = [], crimeResults = [
             </div>
 
             {/* Legend (Bottom Left) - Adjusted position to avoid overlap if needed */}
-            <div style={{ position: 'absolute', bottom: '20px', left: '20px', zIndex: 1000 }}>
-                <div style={{ ...GLASS_PANEL, padding: '12px', display: 'flex', gap: '16px' }}>
+            <div className="legend-overlay" style={{ position: 'absolute', bottom: '20px', left: '20px', zIndex: 1000 }}>
+                <div style={{ ...GLASS_PANEL, padding: '12px', display: 'flex', gap: '16px', flexDirection: 'inherit', alignItems: 'inherit' }}>
                     {Object.entries(COLORS).map(([type, color]) => (
                         <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: color }}></div>
@@ -472,6 +472,23 @@ const CrimeTimeReplay = ({ cadResults = [], arrestResults = [], crimeResults = [
                     cursor: pointer;
                     background: #cbd5e1;
                     border-radius: 2px;
+                }
+                /* Mobile Responsiveness */
+                @media (max-width: 768px) {
+                    .live-feed-overlay {
+                        display: none !important;
+                    }
+                    .controls-overlay {
+                        width: 95% !important;
+                        bottom: 10px !important;
+                    }
+                    .legend-overlay {
+                        bottom: 150px !important;
+                        left: 10px !important;
+                        flex-direction: column !important;
+                        align-items: flex-start !important;
+                        padding: 8px !important;
+                    }
                 }
             `}</style>
         </div>
